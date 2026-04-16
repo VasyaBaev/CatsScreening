@@ -1,0 +1,19 @@
+# EditorConfig помогает держать единые настройки кодировки и переносов строк.
+# В этом проекте фиксируем UTF-8 и CRLF, т.к. основная среда разработки — Windows + PowerShell.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{ts,tsx,js,jsx,json,css,scss,html,yml,yaml}]
+indent_size = 2
+

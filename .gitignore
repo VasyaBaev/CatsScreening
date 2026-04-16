@@ -1,0 +1,27 @@
+# Node / build artifacts
+node_modules/
+dist/
+.turbo/
+
+# Env (секреты)
+.env
+.env.*
+!.env.example
+
+# Временные данные (но отчёты по шагам храним в репозитории)
+.tmp/*
+!.tmp/reports/
+!.tmp/reports/**
+
+# Локальные БД/кэши
+.tmp/db/
+.tmp/storage/
+apps/api/prisma/*.db
+apps/api/prisma/*.db-journal
+
+# Исходный датасет фото (храним локально, не коммитим в git)
+sources/Photos/
+
+# Локальное файловое хранилище (dev)
+apps/api/storage/**
+!apps/api/storage/.gitkeep

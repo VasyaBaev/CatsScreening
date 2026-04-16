@@ -1,0 +1,13 @@
+# Фиксируем CRLF для текстовых файлов в Windows-среде.
+* text=auto eol=crlf
+
+# Бинарные форматы — без преобразований EOL.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.heic binary
+

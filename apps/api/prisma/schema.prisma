@@ -1,0 +1,53 @@
+// Prisma Schema (MVP)
+//
+// Зачем этот файл:
+// - фиксируем структуру данных “кейсов” и изображений,
+// - получаем миграции и типобезопасный доступ к БД.
+//
+// В контексте деплоя на Vercel на бесплатном старте удобнее использовать Postgres
+// (например, Neon/Supabase), поэтому datasource уже настроен на `postgresql`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CaseImageKind {
+  reference
+  diagnostic
+}
+
+model Case {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  /// Метаданные кейса (pH/class/tray/light/location/device/notes).
+  /// Храним как JSON, потому что поля могут уточняться итеративно.
+  metadata Json
+
+  /// Итоговый скоринг (0..1) и уверенность (0..1).
+  score      Float?
+  confidence Float?
+
+  /// QC-флаги (blur/glare/dark) и, в будущем, дополнительные QC-метрики.
+  qc Json?
+
+  images CaseImage[]
+}
+
+model CaseImage {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  caseId String
+  case   Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  kind CaseImageKind
+
+  /// URI/ключ в хранилище (в dev может быть путь к локальному файлу).
+  uri String
+}
