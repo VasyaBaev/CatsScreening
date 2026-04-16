@@ -28,6 +28,14 @@
 ## Где лежат фото
 - pH‑датасет: `sources/Photos/PH/`
 
+## Dataset pipeline (первые фото)
+Документация: `docs/dataset/README.md`
+
+Быстрые команды:
+- `npm run dataset:manifest` — пересобрать `manifest-v1.json` и `blind-set-v1.json`
+- `npm run pipeline:calibrate` — собрать `data/models/calibration-v0.json` (требует ROI разметку)
+- `npm run pipeline:eval` — прогнать blind set и сохранить отчёт в `data/eval/`
+
 ## Запуск (после установки зависимостей)
 Команды выполняются из PowerShell в корне проекта.
 

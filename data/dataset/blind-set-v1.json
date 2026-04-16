@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-16T12:08:47.971Z",
+  "seed": 1337,
+  "size": 10,
+  "strategy": "stratified_60_40",
+  "counts": {
+    "class0": 6,
+    "class1": 4
+  },
+  "items": [
+    {
+      "id": "4788f6749035",
+      "relPath": "sources/Photos/PH/4/(4) 5К серый.jpg",
+      "pH": 4,
+      "class": 1
+    },
+    {
+      "id": "8d4cb9549a91",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) окно.jpg",
+      "pH": 6.13,
+      "class": 0
+    },
+    {
+      "id": "e14d7db48408",
+      "relPath": "sources/Photos/PH/6/(6) окно  белый.jpg",
+      "pH": 6,
+      "class": 0
+    },
+    {
+      "id": "2ba32e337666",
+      "relPath": "sources/Photos/PH/4,6/(4.6) окно  белый.jpg",
+      "pH": 4.6,
+      "class": 1
+    },
+    {
+      "id": "707fdc0b512c",
+      "relPath": "sources/Photos/PH/7,8/(7,8) 5К серый.jpg",
+      "pH": 7.8,
+      "class": 1
+    },
+    {
+      "id": "273876cc4dda",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 5К голубой.jpg",
+      "pH": 6.13,
+      "class": 0
+    },
+    {
+      "id": "2d76a109c2e6",
+      "relPath": "sources/Photos/PH/6/(6) 5К  белый.jpg",
+      "pH": 6,
+      "class": 0
+    },
+    {
+      "id": "9ff84af2f187",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) окно коричневый.jpg",
+      "pH": 6.13,
+      "class": 0
+    },
+    {
+      "id": "ec42e6ab1821",
+      "relPath": "sources/Photos/PH/7,8/(7,8) окно серый.jpg",
+      "pH": 7.8,
+      "class": 1
+    },
+    {
+      "id": "3669e7129c4c",
+      "relPath": "sources/Photos/PH/5,8/(5.8) окно  белый.jpg",
+      "pH": 5.8,
+      "class": 0
+    }
+  ]
+}

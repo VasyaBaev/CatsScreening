@@ -9,6 +9,7 @@
 import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
 
 import { AdminPage } from './pages/AdminPage';
+import { RoiLabelerPage } from './pages/RoiLabelerPage';
 import { UserFlowPage } from './pages/UserFlowPage';
 
 export function App() {
@@ -18,6 +19,7 @@ export function App() {
         <nav style={{ display: 'flex', gap: 12 }}>
           <Link to="/">Скрининг</Link>
           <Link to="/admin">Админка</Link>
+          <Link to="/tools/roi-labeler">ROI</Link>
         </nav>
       </header>
 
@@ -25,9 +27,9 @@ export function App() {
         <Routes>
           <Route path="/" element={<UserFlowPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/tools/roi-labeler" element={<RoiLabelerPage />} />
         </Routes>
       </main>
     </BrowserRouter>
   );
 }
-
