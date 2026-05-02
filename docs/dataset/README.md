@@ -2,6 +2,8 @@
 
 Этот раздел описывает “инженерный” контур работы с первой пачкой фото, не изменяя исходники в `sources/`.
 
+Короткая инструкция для заказчика: `docs/dataset/customer-roi-guide.md`.
+
 ## 1) Где лежат исходные фото
 - `sources/Photos/PH/`
 
@@ -31,6 +33,12 @@ npx tsx scripts/dataset/build-manifest.ts
 npm run dev:web
 ```
 
+Для заказчика есть более короткая команда:
+
+```powershell
+npm run roi:start
+```
+
 Далее открыть в браузере:
 - `http://127.0.0.1:5173/tools/roi-labeler`
 
@@ -40,6 +48,18 @@ npm run dev:web
 3) На каждом фото выделить ROI прямоугольником.
 4) Нажать “Скачать JSON” и сохранить файл как:
 - `data/dataset/roi-labels-v1.json`
+
+Проверить готовую разметку:
+
+```powershell
+npm run roi:check
+```
+
+Отправить разметку обратно в GitHub:
+
+```powershell
+npm run roi:publish
+```
 
 ### 3.3 Формат `roi-labels-v1.json`
 Файл представляет собой JSON:
@@ -56,4 +76,3 @@ npm run dev:web
 
 - Ключи — repo‑relative пути к изображениям (как в manifest).
 - `x/y/w/h` — относительные координаты 0..1 относительно ширины/высоты кадра.
-
