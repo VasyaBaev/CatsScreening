@@ -19,8 +19,7 @@ dist/
 apps/api/prisma/*.db
 apps/api/prisma/*.db-journal
 
-# Исходный датасет фото (храним локально, не коммитим в git)
-sources/Photos/
+# Исходный датасет фото нужен заказчикам для ROI-разметки, поэтому коммитим его в git.
 
 # Локальное файловое хранилище (dev)
 apps/api/storage/**

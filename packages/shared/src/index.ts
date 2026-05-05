@@ -99,3 +99,31 @@ export const CreateCaseRequestSchema = z.object({
 });
 export type CreateCaseRequest = z.infer<typeof CreateCaseRequestSchema>;
 
+/**
+ * ROI прямоугольник для анализа (0..1).
+ * Используется в полуручном режиме и в дальнейшем может вычисляться автоматически.
+ */
+export const RoiRectSchema = z
+  .object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    w: z.number().min(0).max(1),
+    h: z.number().min(0).max(1)
+  })
+  .refine((r) => r.w > 0 && r.h > 0, { message: 'ROI: w/h должны быть > 0' })
+  .refine((r) => r.x + r.w <= 1 && r.y + r.h <= 1, { message: 'ROI выходит за границы изображения (x+w или y+h > 1)' });
+export type RoiRect = z.infer<typeof RoiRectSchema>;
+
+/**
+ * Запрос на анализ пары reference+diagnostic по ROI.
+ *
+ * В MVP это dev‑эндпоинт для отладки пайплайна и первых итераций.
+ * В проде вместо `uri` вероятнее всего будут ключи object storage.
+ */
+export const AnalyzeRequestSchema = z.object({
+  referenceUri: z.string().min(1),
+  diagnosticUri: z.string().min(1),
+  roi: RoiRectSchema,
+  debug: z.boolean().optional().default(false)
+});
+export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema>;

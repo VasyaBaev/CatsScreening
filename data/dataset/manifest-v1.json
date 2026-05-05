@@ -1,0 +1,462 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-16T12:08:47.969Z",
+  "normalRange": {
+    "low": 5.8,
+    "high": 6.4,
+    "inclusive": true
+  },
+  "inputDir": "sources/Photos/PH",
+  "items": [
+    {
+      "id": "ae91f2748027",
+      "relPath": "sources/Photos/PH/4,6/(4.6) 2,7К  белый.jpg",
+      "filename": "(4.6) 2,7К  белый.jpg",
+      "pH": 4.6,
+      "class": 1,
+      "tray": "white",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "38d2501c5af8",
+      "relPath": "sources/Photos/PH/4,6/(4.6) 5К  белый.jpg",
+      "filename": "(4.6) 5К  белый.jpg",
+      "pH": 4.6,
+      "class": 1,
+      "tray": "white",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "2ba32e337666",
+      "relPath": "sources/Photos/PH/4,6/(4.6) окно  белый.jpg",
+      "filename": "(4.6) окно  белый.jpg",
+      "pH": 4.6,
+      "class": 1,
+      "tray": "white",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "56c6bcbae76e",
+      "relPath": "sources/Photos/PH/4/(4) 2,7К белый.jpg",
+      "filename": "(4) 2,7К белый.jpg",
+      "pH": 4,
+      "class": 1,
+      "tray": "white",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "158ec2e07f0d",
+      "relPath": "sources/Photos/PH/4/(4) 2,7К серый.jpg",
+      "filename": "(4) 2,7К серый.jpg",
+      "pH": 4,
+      "class": 1,
+      "tray": "gray",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "cd0c4560cbba",
+      "relPath": "sources/Photos/PH/4/(4) 5К белый.jpg",
+      "filename": "(4) 5К белый.jpg",
+      "pH": 4,
+      "class": 1,
+      "tray": "white",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "4788f6749035",
+      "relPath": "sources/Photos/PH/4/(4) 5К серый.jpg",
+      "filename": "(4) 5К серый.jpg",
+      "pH": 4,
+      "class": 1,
+      "tray": "gray",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "9e70e5c3758e",
+      "relPath": "sources/Photos/PH/4/(4) окно белый.jpg",
+      "filename": "(4) окно белый.jpg",
+      "pH": 4,
+      "class": 1,
+      "tray": "white",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "36bbffcdd7bf",
+      "relPath": "sources/Photos/PH/4/(4) окно серый.jpg",
+      "filename": "(4) окно серый.jpg",
+      "pH": 4,
+      "class": 1,
+      "tray": "gray",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "7242f48cc0eb",
+      "relPath": "sources/Photos/PH/5,8/(5.8) 2,7К  белый.jpg",
+      "filename": "(5.8) 2,7К  белый.jpg",
+      "pH": 5.8,
+      "class": 0,
+      "tray": "white",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "bd5b28c3c718",
+      "relPath": "sources/Photos/PH/5,8/(5.8) 2,7К  серый.jpg",
+      "filename": "(5.8) 2,7К  серый.jpg",
+      "pH": 5.8,
+      "class": 0,
+      "tray": "gray",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "a8a2043c5a4e",
+      "relPath": "sources/Photos/PH/5,8/(5.8) 5К  белый.jpg",
+      "filename": "(5.8) 5К  белый.jpg",
+      "pH": 5.8,
+      "class": 0,
+      "tray": "white",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "b27b61523354",
+      "relPath": "sources/Photos/PH/5,8/(5.8) 5К серый.jpg",
+      "filename": "(5.8) 5К серый.jpg",
+      "pH": 5.8,
+      "class": 0,
+      "tray": "gray",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "3669e7129c4c",
+      "relPath": "sources/Photos/PH/5,8/(5.8) окно  белый.jpg",
+      "filename": "(5.8) окно  белый.jpg",
+      "pH": 5.8,
+      "class": 0,
+      "tray": "white",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "d942e1da02cd",
+      "relPath": "sources/Photos/PH/5,8/(5.8) окно  серый.jpg",
+      "filename": "(5.8) окно  серый.jpg",
+      "pH": 5.8,
+      "class": 0,
+      "tray": "gray",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "4edc15b9ca88",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 2,7К голубой.jpg",
+      "filename": "оригинал (6.13) 2,7К голубой.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "unknown",
+      "light": "3000K",
+      "notes": "tray_raw=blue;light_raw=2.7K"
+    },
+    {
+      "id": "f7de8e8112fd",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 2,7К коричневый.jpg",
+      "filename": "оригинал (6.13) 2,7К коричневый.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "unknown",
+      "light": "3000K",
+      "notes": "tray_raw=brown;light_raw=2.7K"
+    },
+    {
+      "id": "03bec4941148",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 2,7К сер.jpg",
+      "filename": "оригинал (6.13) 2,7К сер.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "gray",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "c4e4e6c59a8b",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 5К белый.jpg",
+      "filename": "оригинал (6.13) 5К белый.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "white",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "273876cc4dda",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 5К голубой.jpg",
+      "filename": "оригинал (6.13) 5К голубой.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "unknown",
+      "light": "6000K",
+      "notes": "tray_raw=blue;light_raw=5K"
+    },
+    {
+      "id": "264d24654e80",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 5К коричневый.jpg",
+      "filename": "оригинал (6.13) 5К коричневый.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "unknown",
+      "light": "6000K",
+      "notes": "tray_raw=brown;light_raw=5K"
+    },
+    {
+      "id": "a1e189c8f964",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) 5К сер.jpg",
+      "filename": "оригинал (6.13) 5К сер.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "gray",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "505deb6a7df8",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) окно голубой лоток.jpg",
+      "filename": "оригинал (6.13) окно голубой лоток.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "unknown",
+      "light": "day",
+      "notes": "tray_raw=blue"
+    },
+    {
+      "id": "9ff84af2f187",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) окно коричневый.jpg",
+      "filename": "оригинал (6.13) окно коричневый.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "unknown",
+      "light": "day",
+      "notes": "tray_raw=brown"
+    },
+    {
+      "id": "afdd615aa9fe",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) окно серый лоток.jpg",
+      "filename": "оригинал (6.13) окно серый лоток.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "gray",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "8d4cb9549a91",
+      "relPath": "sources/Photos/PH/6,13/оригинал (6.13) окно.jpg",
+      "filename": "оригинал (6.13) окно.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "unknown",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "96c91c7eb8a4",
+      "relPath": "sources/Photos/PH/6,13/оригинал 2,7К белый.jpg",
+      "filename": "оригинал 2,7К белый.jpg",
+      "pH": 6.13,
+      "class": 0,
+      "tray": "white",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "defd3495b18e",
+      "relPath": "sources/Photos/PH/6,4/(6.4) 2,7К  белый.jpg",
+      "filename": "(6.4) 2,7К  белый.jpg",
+      "pH": 6.4,
+      "class": 0,
+      "tray": "white",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "0cfef59a943a",
+      "relPath": "sources/Photos/PH/6,4/(6.4) 2,7К  серый.jpg",
+      "filename": "(6.4) 2,7К  серый.jpg",
+      "pH": 6.4,
+      "class": 0,
+      "tray": "gray",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "4bd35fbdb1c0",
+      "relPath": "sources/Photos/PH/6,4/(6.4) 5К  белый.jpg",
+      "filename": "(6.4) 5К  белый.jpg",
+      "pH": 6.4,
+      "class": 0,
+      "tray": "white",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "c75272c8958e",
+      "relPath": "sources/Photos/PH/6,4/(6.4) 5К  серый.jpg",
+      "filename": "(6.4) 5К  серый.jpg",
+      "pH": 6.4,
+      "class": 0,
+      "tray": "gray",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "cb6127cce90b",
+      "relPath": "sources/Photos/PH/6,4/(6.4) окно  белый.jpg",
+      "filename": "(6.4) окно  белый.jpg",
+      "pH": 6.4,
+      "class": 0,
+      "tray": "white",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "512876607205",
+      "relPath": "sources/Photos/PH/6,4/(6.4) окно  серый.jpg",
+      "filename": "(6.4) окно  серый.jpg",
+      "pH": 6.4,
+      "class": 0,
+      "tray": "gray",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "ba644b12868a",
+      "relPath": "sources/Photos/PH/6/(6) 2,7К  белый.jpg",
+      "filename": "(6) 2,7К  белый.jpg",
+      "pH": 6,
+      "class": 0,
+      "tray": "white",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "65f6c16e36d0",
+      "relPath": "sources/Photos/PH/6/(6) 2,7К  серый.jpg",
+      "filename": "(6) 2,7К  серый.jpg",
+      "pH": 6,
+      "class": 0,
+      "tray": "gray",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "2d76a109c2e6",
+      "relPath": "sources/Photos/PH/6/(6) 5К  белый.jpg",
+      "filename": "(6) 5К  белый.jpg",
+      "pH": 6,
+      "class": 0,
+      "tray": "white",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "5d2dcc00d3bb",
+      "relPath": "sources/Photos/PH/6/(6) 5К  серый.jpg",
+      "filename": "(6) 5К  серый.jpg",
+      "pH": 6,
+      "class": 0,
+      "tray": "gray",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "e14d7db48408",
+      "relPath": "sources/Photos/PH/6/(6) окно  белый.jpg",
+      "filename": "(6) окно  белый.jpg",
+      "pH": 6,
+      "class": 0,
+      "tray": "white",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "dcc6a8aa1d23",
+      "relPath": "sources/Photos/PH/6/(6) окно  серый.jpg",
+      "filename": "(6) окно  серый.jpg",
+      "pH": 6,
+      "class": 0,
+      "tray": "gray",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "95c911dde5f8",
+      "relPath": "sources/Photos/PH/7,8/(7,8) 2,7К  белый.jpg",
+      "filename": "(7,8) 2,7К  белый.jpg",
+      "pH": 7.8,
+      "class": 1,
+      "tray": "white",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "263fbd92bc03",
+      "relPath": "sources/Photos/PH/7,8/(7,8) 2,7К серый.jpg",
+      "filename": "(7,8) 2,7К серый.jpg",
+      "pH": 7.8,
+      "class": 1,
+      "tray": "gray",
+      "light": "3000K",
+      "notes": "light_raw=2.7K"
+    },
+    {
+      "id": "0cb0a8450243",
+      "relPath": "sources/Photos/PH/7,8/(7,8) 5К белый.jpg",
+      "filename": "(7,8) 5К белый.jpg",
+      "pH": 7.8,
+      "class": 1,
+      "tray": "white",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "707fdc0b512c",
+      "relPath": "sources/Photos/PH/7,8/(7,8) 5К серый.jpg",
+      "filename": "(7,8) 5К серый.jpg",
+      "pH": 7.8,
+      "class": 1,
+      "tray": "gray",
+      "light": "6000K",
+      "notes": "light_raw=5K"
+    },
+    {
+      "id": "7c4999fc5ead",
+      "relPath": "sources/Photos/PH/7,8/(7,8) окно  белый.jpg",
+      "filename": "(7,8) окно  белый.jpg",
+      "pH": 7.8,
+      "class": 1,
+      "tray": "white",
+      "light": "day",
+      "notes": null
+    },
+    {
+      "id": "ec42e6ab1821",
+      "relPath": "sources/Photos/PH/7,8/(7,8) окно серый.jpg",
+      "filename": "(7,8) окно серый.jpg",
+      "pH": 7.8,
+      "class": 1,
+      "tray": "gray",
+      "light": "day",
+      "notes": null
+    }
+  ]
+}
