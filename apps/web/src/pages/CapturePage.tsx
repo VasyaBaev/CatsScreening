@@ -1,105 +1,71 @@
 /**
- * Экран production-like съёмки пары reference + diagnostic.
- *
- * Что делает:
- * - собирает пару фотографий с известным diagnostic pH для будущего обучения;
- * - сохраняет служебные условия съёмки и browser/device metadata;
- * - показывает оператору пунктирную ROI-рамку, чтобы центральная область кадра
- *   содержала только чистый наполнитель без бортиков, плитки и других деталей.
- *
- * Почему результат модели не показывается:
- * - задача этого экрана сейчас не диагностика пользователя, а сбор ground-truth датасета;
- * - pH известен заранее и нужен как метка для последующего обучения/валидации.
+ * Мобильный capture-flow по серверному заданию.
+ * Оригиналы отправляются без перекодирования, состояние слотов хранит сервер.
  */
 
 import {
-  derivePhBand,
-  type CaseMetadata,
-  type PhBand,
+  type CaptureAttempt,
+  type CaptureTask,
+  type CaptureTaskSlot,
   type RoiShape,
 } from '@cats-screening/shared';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { FieldCaption } from '../components/InfoHint';
 import { RoiEditor } from '../components/RoiEditor';
-import { createCase, uploadImage } from '../lib/api';
+import {
+  createCaptureAttempt,
+  fetchCaptureAttempt,
+  fetchCaptureTask,
+  finalizeCaptureAttempt,
+  updateCaptureSlotRoi,
+  uploadCaptureSlot,
+} from '../lib/api';
 import { FIXED_WIDE_ROI, rectToRoiShape } from '../lib/roi';
 
-const PH_POINTS = [4.0, 4.6, 5.4, 5.6, 5.8, 6.13, 6.4, 6.6, 6.8, 7.0, 7.8];
+const LIGHTS = [
+  ['daylight', 'Дневной свет'],
+  ['warm_indoor', 'Тёплый комнатный'],
+  ['cool_indoor', 'Холодный комнатный'],
+  ['mixed_indoor', 'Смешанный'],
+] as const;
+const ANGLES = [
+  ['straight', 'Ровно сверху'],
+  ['slight_left', 'Наклон слева'],
+  ['slight_right', 'Наклон справа'],
+  ['slight_top', 'Наклон сверху'],
+] as const;
+const DISTANCES = [
+  ['normal', 'Обычная'],
+  ['slightly_near', 'Чуть ближе'],
+  ['slightly_far', 'Чуть дальше'],
+] as const;
 
-const LIGHT_LABELS = [
-  { value: 'daylight', label: 'Дневной свет' },
-  { value: 'warm_indoor', label: 'Тёплый комнатный' },
-  { value: 'cool_indoor', label: 'Холодный комнатный' },
-  { value: 'mixed_indoor', label: 'Смешанный' },
-];
-
-const ANGLE_LABELS = [
-  { value: 'straight', label: 'Ровно сверху' },
-  { value: 'slight_left', label: 'Небольшой наклон слева' },
-  { value: 'slight_right', label: 'Небольшой наклон справа' },
-  { value: 'slight_top', label: 'Небольшой наклон сверху' },
-];
-
-const DISTANCE_LABELS = [
-  { value: 'normal', label: 'Обычная' },
-  { value: 'slightly_near', label: 'Чуть ближе' },
-  { value: 'slightly_far', label: 'Чуть дальше' },
-];
-
-const OPERATOR_STORAGE_KEY = 'cats.capture.operatorId';
-const DEVICE_STORAGE_KEY = 'cats.capture.device';
-
-type BrowserUserAgentData = {
-  platform?: string;
-  mobile?: boolean;
-  getHighEntropyValues?: (hints: string[]) => Promise<{
-    model?: string;
-    platform?: string;
-    platformVersion?: string;
-  }>;
-};
-
-type ImageDraft = {
-  fileName: string;
-  previewUrl: string;
-  dataBase64: string;
-  contentType: 'image/jpeg';
-  capturedAt: string;
-  bytes: number;
-  roi: RoiShape;
-};
+const OPERATOR_KEY = 'cats.capture.operatorId';
+const DEVICE_KEY = 'cats.capture.device';
+const ATTEMPT_KEY = 'cats.capture.attemptId';
 
 type CaptureForm = {
+  taskCode: string;
   series: string;
   operatorId: string;
   device: string;
-  location: string;
-  tray: 'white' | 'gray' | 'yellow';
   lightLabel: string;
   angleLabel: string;
   distanceLabel: string;
-  referencePh: string;
-  diagnosticPh: string;
-  notes: string;
 };
 
-function newPairId(): string {
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[-:.TZ]/g, '')
-    .slice(0, 14);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `prodlike-${stamp}-${random}`;
-}
+type SlotDraft = {
+  file: File | null;
+  previewUrl: string | null;
+  localPreview: boolean;
+  roi: RoiShape;
+  status: 'empty' | 'uploading' | 'saved' | 'error';
+  progress: number | null;
+  error: string | null;
+  roiDirty: boolean;
+};
 
-function bandLabel(band: PhBand): string {
-  if (band === 'low') return 'Ниже нормы';
-  if (band === 'high') return 'Выше нормы';
-  return 'Норма';
-}
-
-function readStoredValue(key: string): string {
+function readLocal(key: string): string {
   try {
     return window.localStorage.getItem(key) ?? '';
   } catch {
@@ -107,604 +73,851 @@ function readStoredValue(key: string): string {
   }
 }
 
-function writeStoredValue(key: string, value: string) {
+function writeLocal(key: string, value: string) {
   try {
-    const trimmed = value.trim();
-    if (trimmed) window.localStorage.setItem(key, trimmed);
+    if (value.trim()) window.localStorage.setItem(key, value.trim());
     else window.localStorage.removeItem(key);
   } catch {
-    // Если localStorage недоступен, форма всё равно должна работать без сохранения.
+    // localStorage опционален: capture остаётся рабочим без восстановления.
   }
 }
 
-function getUserAgentData(): BrowserUserAgentData | undefined {
-  return (window.navigator as Navigator & { userAgentData?: BrowserUserAgentData }).userAgentData;
-}
-
-function inferDeviceFromUserAgent(): string {
+function inferDevice(): string {
   const ua = window.navigator.userAgent;
-  const uaData = getUserAgentData();
   const samsung = ua.match(/\bSM-[A-Z0-9]+\b/i)?.[0];
-
-  if (samsung) return `Samsung ${samsung.toUpperCase()}`;
+  if (samsung) return 'Samsung ' + samsung.toUpperCase();
   if (/iPhone/i.test(ua)) return 'iPhone';
   if (/iPad/i.test(ua)) return 'iPad';
-  if (/Android/i.test(ua)) return uaData?.mobile ? 'Android phone' : 'Android device';
-  if (uaData?.platform) return uaData.mobile ? `${uaData.platform} mobile` : uaData.platform;
+  if (/Android/i.test(ua)) return 'Android phone';
   if (/Windows/i.test(ua)) return 'Windows desktop';
   if (/Mac OS X/i.test(ua)) return 'macOS desktop';
   return '';
 }
 
-async function inferHighEntropyDevice(): Promise<string> {
-  const uaData = getUserAgentData();
-  if (!uaData?.getHighEntropyValues) return '';
-
-  const values = await uaData.getHighEntropyValues(['model', 'platform', 'platformVersion']);
-  const model = values.model?.trim();
-  const platform = values.platform?.trim();
-
-  if (model && platform) return `${platform} ${model}`;
-  if (model) return model;
-  if (platform) return uaData.mobile ? `${platform} mobile` : platform;
-  return '';
-}
-
-function buildInitialForm(): CaptureForm {
+function initialForm(): CaptureForm {
   return {
+    taskCode: '',
     series: 'V9',
-    operatorId: readStoredValue(OPERATOR_STORAGE_KEY),
-    device: readStoredValue(DEVICE_STORAGE_KEY) || inferDeviceFromUserAgent(),
-    location: 'production_like',
-    tray: 'white',
+    operatorId: readLocal(OPERATOR_KEY),
+    device: readLocal(DEVICE_KEY) || inferDevice(),
     lightLabel: 'daylight',
     angleLabel: 'straight',
     distanceLabel: 'normal',
-    referencePh: '6.13',
-    diagnosticPh: '6.13',
-    notes: '',
   };
 }
 
-function deriveBaseLight(lightLabel: string): 'day' | '3000K' | '6000K' {
-  if (lightLabel === 'warm_indoor') return '3000K';
-  if (lightLabel === 'cool_indoor') return '6000K';
-  return 'day';
+function freshRoi(): RoiShape {
+  return rectToRoiShape(FIXED_WIDE_ROI);
 }
 
-function readImageElement(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Не удалось прочитать изображение'));
-    image.src = url;
-  });
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function prepareImage(file: File): Promise<ImageDraft> {
-  const sourceUrl = URL.createObjectURL(file);
-  const image = await readImageElement(sourceUrl);
-  const maxSide = 1800;
-  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('Canvas недоступен');
-
-  context.drawImage(image, 0, 0, width, height);
-  URL.revokeObjectURL(sourceUrl);
-
-  const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (value) => {
-        if (!value) reject(new Error('Не удалось сжать изображение'));
-        else resolve(value);
+function draftsForTask(task: CaptureTask): Record<string, SlotDraft> {
+  return Object.fromEntries(
+    task.slots.map((slot) => [
+      slot.key,
+      {
+        file: null,
+        previewUrl: null,
+        localPreview: false,
+        roi: freshRoi(),
+        status: 'empty',
+        progress: null,
+        error: null,
+        roiDirty: false,
       },
-      'image/jpeg',
-      0.86,
-    );
-  });
-
-  const dataUrl = await blobToDataUrl(blob);
-  const dataBase64 = dataUrl.split(',')[1] ?? '';
-
-  return {
-    fileName: file.name.replace(/\.[^.]+$/, '.jpg'),
-    previewUrl: URL.createObjectURL(blob),
-    dataBase64,
-    contentType: 'image/jpeg',
-    capturedAt: new Date().toISOString(),
-    bytes: blob.size,
-    roi: rectToRoiShape(FIXED_WIDE_ROI),
-  };
+    ]),
+  );
 }
 
-function captureDeltaSeconds(
-  reference?: ImageDraft | null,
-  diagnostic?: ImageDraft | null,
-): number | null {
-  if (!reference || !diagnostic) return null;
-  const diff = new Date(diagnostic.capturedAt).getTime() - new Date(reference.capturedAt).getTime();
-  if (!Number.isFinite(diff)) return null;
-  return Math.max(0, Math.round(diff / 1000));
+function draftsForAttempt(attempt: CaptureAttempt): Record<string, SlotDraft> {
+  return Object.fromEntries(
+    attempt.task.slots.map((slot) => {
+      const upload = attempt.uploads[slot.key];
+      return [
+        slot.key,
+        {
+          file: null,
+          previewUrl: upload?.publicUrl ?? null,
+          localPreview: false,
+          roi: upload?.roi ?? freshRoi(),
+          status: upload ? 'saved' : 'empty',
+          progress: null,
+          error: null,
+          roiDirty: false,
+        },
+      ];
+    }),
+  );
+}
+
+function duration(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  return String(Math.floor(safe / 60)).padStart(2, '0') + ':' + String(safe % 60).padStart(2, '0');
+}
+
+function timing(slot: CaptureTaskSlot, elapsed: number): string {
+  if (slot.targetSeconds === null) return 'Прошло ' + duration(elapsed);
+  const remaining = slot.targetSeconds - elapsed;
+  if (remaining > 0) return 'До целевого времени ' + duration(remaining);
+  const over = Math.abs(remaining);
+  return over <= (slot.toleranceSeconds ?? 0)
+    ? 'Целевое окно: +' + duration(over)
+    : 'После целевого окна: +' + duration(over);
+}
+
+function slotStatus(draft: SlotDraft): string {
+  if (draft.status === 'uploading') {
+    return draft.progress === null ? 'Сохранение ROI…' : 'Передано ' + draft.progress + '%';
+  }
+  if (draft.status === 'saved' && draft.roiDirty) return 'ROI изменена';
+  if (draft.status === 'saved') return 'Сохранено';
+  if (draft.status === 'error') return 'Нужен повтор';
+  if (draft.file) return 'Готово к загрузке';
+  return 'Фото не выбрано';
 }
 
 export function CapturePage() {
-  const [form, setForm] = useState<CaptureForm>(() => buildInitialForm());
-  const [pairId, setPairId] = useState(newPairId);
-  const [reference, setReference] = useState<ImageDraft | null>(null);
-  const [diagnostic, setDiagnostic] = useState<ImageDraft | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState<CaptureForm>(initialForm);
+  const [task, setTask] = useState<CaptureTask | null>(null);
+  const [attempt, setAttempt] = useState<CaptureAttempt | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, SlotDraft>>({});
+  const [restoring, setRestoring] = useState(true);
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [startBusy, setStartBusy] = useState(false);
+  const [busySlot, setBusySlot] = useState<string | null>(null);
+  const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [savedCaseId, setSavedCaseId] = useState<string | null>(null);
-  const [showLightingHelp, setShowLightingHelp] = useState(false);
-  const [showDistanceHelp, setShowDistanceHelp] = useState(false);
+  const [finalPh, setFinalPh] = useState('');
+  const [included, setIncluded] = useState(true);
+  const [exclusionReason, setExclusionReason] = useState('');
+  const [clock, setClock] = useState(Date.now());
+  const localUrls = useRef(new Set<string>());
 
-  const diagnosticPh = Number(form.diagnosticPh);
-  const diagnosticBand = derivePhBand(diagnosticPh);
-  const ready = reference && diagnostic && !busy;
+  const activeTask = attempt?.task ?? task;
+  const finalized = attempt?.status === 'finalized';
+  const elapsed = useMemo(() => {
+    if (!attempt) return 0;
+    const started = new Date(attempt.reactionStartedAt).getTime();
+    return Number.isFinite(started) ? Math.max(0, Math.floor((clock - started) / 1000)) : 0;
+  }, [attempt, clock]);
 
-  const delta = useMemo(() => captureDeltaSeconds(reference, diagnostic), [reference, diagnostic]);
+  const currentSlot = useMemo(() => {
+    if (!activeTask) return null;
+    return (
+      activeTask.slots.find((slot) => {
+        const draft = drafts[slot.key];
+        return slot.required && (!draft || draft.status !== 'saved' || draft.roiDirty);
+      }) ??
+      activeTask.slots.find((slot) => {
+        const draft = drafts[slot.key];
+        return !draft || draft.status !== 'saved' || draft.roiDirty;
+      }) ??
+      null
+    );
+  }, [activeTask, drafts]);
 
-  useEffect(() => {
-    writeStoredValue(OPERATOR_STORAGE_KEY, form.operatorId);
-  }, [form.operatorId]);
+  const ready = useMemo(
+    () =>
+      Boolean(activeTask) &&
+      activeTask!.slots
+        .filter((slot) => slot.required)
+        .every((slot) => drafts[slot.key]?.status === 'saved' && !drafts[slot.key]?.roiDirty),
+    [activeTask, drafts],
+  );
 
-  useEffect(() => {
-    writeStoredValue(DEVICE_STORAGE_KEY, form.device);
-  }, [form.device]);
+  useEffect(() => writeLocal(OPERATOR_KEY, form.operatorId), [form.operatorId]);
+  useEffect(() => writeLocal(DEVICE_KEY, form.device), [form.device]);
 
   useEffect(() => {
     let cancelled = false;
+    const id = readLocal(ATTEMPT_KEY);
+    if (!id) {
+      setRestoring(false);
+      return;
+    }
 
-    if (readStoredValue(DEVICE_STORAGE_KEY)) return;
-
-    inferHighEntropyDevice()
-      .then((detected) => {
-        if (!detected || cancelled) return;
-
-        setForm((current) => {
-          const currentValue = current.device.trim();
-          if (
-            currentValue &&
-            !['Android phone', 'Android device', 'Windows desktop', 'macOS desktop'].includes(
-              currentValue,
-            )
-          ) {
-            return current;
-          }
-
-          return { ...current, device: detected };
-        });
+    fetchCaptureAttempt(id)
+      .then((restored) => {
+        if (!cancelled) applyAttempt(restored);
       })
-      .catch(() => {
-        // Расширенные browser hints опциональны; fallback уже заполнен из userAgent.
+      .catch((reason) => {
+        if (cancelled) return;
+        writeLocal(ATTEMPT_KEY, '');
+        setError(
+          'Не удалось восстановить попытку: ' +
+            (reason instanceof Error ? reason.message : String(reason)),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setRestoring(false);
       });
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  function update<K extends keyof CaptureForm>(key: K, value: CaptureForm[K]) {
+  useEffect(() => {
+    if (!attempt || attempt.status !== 'active') return;
+    setClock(Date.now());
+    const interval = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [attempt?.id, attempt?.status]);
+
+  useEffect(
+    () => () => {
+      for (const url of localUrls.current) URL.revokeObjectURL(url);
+    },
+    [],
+  );
+
+  function applyAttempt(next: CaptureAttempt) {
+    setAttempt(next);
+    setTask(next.task);
+    setDrafts(draftsForAttempt(next));
+    setForm((current) => ({
+      ...current,
+      taskCode: next.task.code,
+      series: next.series,
+      operatorId: next.operatorId,
+      device: next.device,
+      lightLabel: next.condition.lightLabel,
+      angleLabel: next.condition.angleLabel,
+      distanceLabel: next.condition.distanceLabel,
+    }));
+    setFinalPh(next.finalMixturePh?.toString() ?? '');
+    setIncluded(next.result?.included ?? true);
+    setExclusionReason(next.result?.exclusionReason ?? '');
+    writeLocal(ATTEMPT_KEY, next.id);
+  }
+
+  function updateForm<K extends keyof CaptureForm>(key: K, value: CaptureForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
-  }
-
-  async function handleFile(kind: 'reference' | 'diagnostic', file: File | null) {
-    if (!file) return;
-    setError(null);
-    const prepared = await prepareImage(file);
-
-    if (kind === 'reference') setReference(prepared);
-    else setDiagnostic(prepared);
-  }
-
-  function updateImageRoi(kind: 'reference' | 'diagnostic', roi: RoiShape) {
-    if (kind === 'reference') {
-      setReference((current) => (current ? { ...current, roi } : current));
-    } else {
-      setDiagnostic((current) => (current ? { ...current, roi } : current));
+    if (key === 'taskCode' && !attempt) {
+      setTask(null);
+      setDrafts({});
     }
   }
 
-  function resetPair() {
-    setReference(null);
-    setDiagnostic(null);
-    setPairId(newPairId());
-    setSavedCaseId(null);
-    setError(null);
+  function updateDraft(slotKey: string, change: Partial<SlotDraft>) {
+    setDrafts((current) => {
+      const draft = current[slotKey];
+      return draft ? { ...current, [slotKey]: { ...draft, ...change } } : current;
+    });
   }
 
-  async function submit() {
-    if (!reference || !diagnostic) return;
+  async function lookup() {
+    const code = form.taskCode.trim().toUpperCase();
+    if (!code) {
+      setError('Введите код задания.');
+      return;
+    }
+    try {
+      setLookupBusy(true);
+      setError(null);
+      const found = await fetchCaptureTask(code);
+      setTask(found);
+      setDrafts(draftsForTask(found));
+      setForm((current) => ({ ...current, taskCode: found.code }));
+    } catch (reason) {
+      setTask(null);
+      setDrafts({});
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLookupBusy(false);
+    }
+  }
+
+  async function start() {
+    const operatorId = form.operatorId.trim();
+    const device = form.device.trim();
+    const series = form.series.trim();
+    if (!operatorId || !device || !series || !form.taskCode.trim()) {
+      setError('Заполните код, оператора, устройство и серию.');
+      return;
+    }
+    try {
+      setStartBusy(true);
+      setError(null);
+      const code = form.taskCode.trim().toUpperCase();
+      const selected = task?.code === code ? task : await fetchCaptureTask(code);
+      const created = await createCaptureAttempt({
+        taskCode: selected.code,
+        operatorId,
+        device,
+        series,
+        lightLabel: form.lightLabel,
+        angleLabel: form.angleLabel,
+        distanceLabel: form.distanceLabel,
+      });
+      applyAttempt(created);
+      setClock(Date.now());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setStartBusy(false);
+    }
+  }
+
+  function chooseFile(slotKey: string, file: File | null) {
+    const current = drafts[slotKey];
+    if (!file || !current || finalized) return;
+    if (current.localPreview && current.previewUrl) {
+      URL.revokeObjectURL(current.previewUrl);
+      localUrls.current.delete(current.previewUrl);
+    }
+    const previewUrl = URL.createObjectURL(file);
+    localUrls.current.add(previewUrl);
+    updateDraft(slotKey, {
+      file,
+      previewUrl,
+      localPreview: true,
+      status: 'empty',
+      progress: null,
+      error: null,
+      roiDirty: false,
+    });
+  }
+
+  function changeRoi(slotKey: string, roi: RoiShape) {
+    const current = drafts[slotKey];
+    if (!current || finalized) return;
+    updateDraft(slotKey, {
+      roi,
+      roiDirty: current.status === 'saved' || current.roiDirty,
+      error: null,
+    });
+  }
+
+  async function saveSlot(slotKey: string) {
+    if (!attempt || attempt.status !== 'active') return;
+    const draft = drafts[slotKey];
+    if (!draft || (!draft.file && !draft.roiDirty)) return;
 
     try {
-      setBusy(true);
-      setError(null);
-      setSavedCaseId(null);
-
-      const [referenceUpload, diagnosticUpload] = await Promise.all([
-        uploadImage({
-          pairId,
-          kind: 'reference',
-          fileName: reference.fileName,
-          contentType: reference.contentType,
-          dataBase64: reference.dataBase64,
-        }),
-        uploadImage({
-          pairId,
-          kind: 'diagnostic',
-          fileName: diagnostic.fileName,
-          contentType: diagnostic.contentType,
-          dataBase64: diagnostic.dataBase64,
-        }),
-      ]);
-
-      const metadata: CaseMetadata = {
-        pH: diagnosticPh,
-        class: diagnosticBand === 'normal' ? 0 : 1,
-        tray: form.tray,
-        light: deriveBaseLight(form.lightLabel),
-        location: form.location,
-        device: form.device.trim() || null,
-        notes: form.notes.trim() || null,
-        series: form.series.trim(),
-        pairId,
-        captureMode: 'production_like_lab_ground_truth',
-        operatorId: form.operatorId.trim() || null,
-        referencePh: Number(form.referencePh),
-        diagnosticPh,
-        diagnosticBand,
-        condition: {
-          lightLabel: form.lightLabel,
-          angleLabel: form.angleLabel,
-          distanceLabel: form.distanceLabel,
-        },
-        capture: {
-          referenceCapturedAt: reference.capturedAt,
-          diagnosticCapturedAt: diagnostic.capturedAt,
-          captureDeltaSeconds: delta,
-        },
-        rois: {
-          reference: reference.roi,
-          diagnostic: diagnostic.roi,
-        },
-        client: {
-          userAgent: window.navigator.userAgent,
-          viewport: {
-            width: window.innerWidth,
-            height: window.innerHeight,
-          },
-        },
-      };
-
-      const created = await createCase({
-        metadata,
-        images: [
-          { kind: 'reference', uri: referenceUpload.uri },
-          { kind: 'diagnostic', uri: diagnosticUpload.uri },
-        ],
+      setBusySlot(slotKey);
+      updateDraft(slotKey, {
+        status: 'uploading',
+        progress: draft.file ? 0 : null,
+        error: null,
       });
-
-      setSavedCaseId(created.id);
-      setPairId(newPairId());
-      setReference(null);
-      setDiagnostic(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (draft.file) {
+        await uploadCaptureSlot({
+          attemptId: attempt.id,
+          slotKey,
+          file: draft.file,
+          onProgress: (loaded, total) =>
+            updateDraft(slotKey, {
+              progress: total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0,
+            }),
+        });
+      }
+      const updated = await updateCaptureSlotRoi(attempt.id, slotKey, draft.roi);
+      setAttempt(updated);
+      updateDraft(slotKey, {
+        file: null,
+        status: 'saved',
+        progress: null,
+        error: null,
+        roiDirty: false,
+      });
+    } catch (reason) {
+      updateDraft(slotKey, {
+        status: 'error',
+        progress: null,
+        error: reason instanceof Error ? reason.message : String(reason),
+      });
     } finally {
-      setBusy(false);
+      setBusySlot(null);
     }
   }
 
+  async function finish() {
+    if (!attempt || attempt.status !== 'active' || !ready) return;
+    let parsedPh: number | null = null;
+    if (attempt.task.taskType !== 'blank_qc' && finalPh.trim()) {
+      parsedPh = Number(finalPh.replace(',', '.'));
+      if (!Number.isFinite(parsedPh) || parsedPh < 0 || parsedPh > 14) {
+        setError('Финальный pH должен быть числом от 0 до 14.');
+        return;
+      }
+    }
+    if (!included && !exclusionReason.trim()) {
+      setError('Укажите причину исключения кейса.');
+      return;
+    }
+
+    try {
+      setFinalizeBusy(true);
+      setError(null);
+      applyAttempt(
+        await finalizeCaptureAttempt(attempt.id, {
+          finalMixturePh: parsedPh,
+          included,
+          exclusionReason: included ? null : exclusionReason.trim(),
+        }),
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setFinalizeBusy(false);
+    }
+  }
+
+  function newTask() {
+    for (const url of localUrls.current) URL.revokeObjectURL(url);
+    localUrls.current.clear();
+    writeLocal(ATTEMPT_KEY, '');
+    setAttempt(null);
+    setTask(null);
+    setDrafts({});
+    setForm((current) => ({ ...current, taskCode: '' }));
+    setFinalPh('');
+    setIncluded(true);
+    setExclusionReason('');
+    setError(null);
+  }
+
+  const status = restoring
+    ? 'Восстанавливаем предыдущую попытку…'
+    : finalized
+      ? 'Кейс сохранён'
+      : attempt
+        ? currentSlot
+          ? 'Текущий шаг: ' + currentSlot.label
+          : 'Все снимки сохранены — можно завершать'
+        : task
+          ? 'Задание найдено — можно начинать'
+          : 'Введите код задания';
+
   return (
-    <section className="capture-shell">
-      <div className="capture-header">
+    <section className="capture-mobile">
+      <header className="capture-mobile-header">
         <div>
-          <h1>Съёмка пары для обучения</h1>
+          <p className="capture-kicker">Capture · Mobile First</p>
+          <h1>Съёмка по заданию</h1>
           <p className="muted">
-            ID пары: <span className="mono">{pairId}</span>
+            Оригиналы сохраняются без сжатия. Повтор одного слота не сбрасывает остальные.
           </p>
         </div>
-        <div className={`band-pill band-${diagnosticBand}`}>
-          {bandLabel(diagnosticBand)} pH {form.diagnosticPh}
-        </div>
+        {attempt ? (
+          <div className="capture-timer">
+            <span>Прошло</span>
+            <strong>{duration(elapsed)}</strong>
+          </div>
+        ) : null}
+      </header>
+
+      <div className="capture-status-strip" role="status" aria-live="polite">
+        <span
+          className={'capture-status-dot ' + (finalized ? 'is-done' : attempt ? 'is-active' : '')}
+        />
+        <strong>{status}</strong>
+        {attempt ? <span className="mono">#{attempt.id.slice(0, 8)}</span> : null}
       </div>
 
-      <div className="capture-grid">
-        <section className="panel capture-form">
-          <h2>Сессия</h2>
-          <div className="form-grid">
-            <label>
-              <FieldCaption hint="Название серии съёмки. Одинаковое значение помогает потом объединять пары в один эксперимент.">
-                Серия
-              </FieldCaption>
-              <input
-                value={form.series}
-                onChange={(event) => update('series', event.target.value)}
-              />
-            </label>
-            <label>
-              <FieldCaption hint="Имя или короткий код оператора. Сохраняется в браузере, чтобы не вводить повторно.">
-                Оператор
-              </FieldCaption>
-              <input
-                value={form.operatorId}
-                onChange={(event) => update('operatorId', event.target.value)}
-              />
-            </label>
-            <label>
-              <FieldCaption hint="Модель устройства. Заполняется автоматически из браузера, но её можно поправить вручную.">
-                Устройство
-              </FieldCaption>
-              <input
-                value={form.device}
-                onChange={(event) => update('device', event.target.value)}
-                placeholder="iPhone / Samsung"
-              />
-            </label>
-            <label>
-              <FieldCaption hint="Короткое описание места или режима съёмки. Для этой серии обычно оставляем production_like.">
-                Место / режим
-              </FieldCaption>
-              <input
-                value={form.location}
-                onChange={(event) => update('location', event.target.value)}
-              />
-            </label>
-            <label>
-              <FieldCaption hint="Цвет лотка или подложки, на которой лежит наполнитель. Это помогает найти систематические ошибки по фону.">
-                Лоток
-              </FieldCaption>
-              <select
-                value={form.tray}
-                onChange={(event) => update('tray', event.target.value as CaptureForm['tray'])}
-              >
-                <option value="white">Белый</option>
-                <option value="gray">Серый</option>
-                <option value="yellow">Жёлтый</option>
-              </select>
-            </label>
-            <label>
-              <FieldCaption hint="pH чистого наполнителя на reference-снимке. В текущем протоколе обычно 6.13.">
-                pH чистого
-              </FieldCaption>
-              <input
-                value={form.referencePh}
-                onChange={(event) => update('referencePh', event.target.value)}
-                inputMode="decimal"
-              />
-            </label>
-            <label>
-              <FieldCaption hint="Точный pH диагностического образца. Это ground truth метка, по которой потом будет обучаться модель.">
-                pH после реакции
-              </FieldCaption>
-              <select
-                value={form.diagnosticPh}
-                onChange={(event) => update('diagnosticPh', event.target.value)}
-              >
-                {PH_POINTS.map((ph) => (
-                  <option key={ph} value={String(ph)}>
-                    {ph}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+      <section className="panel capture-task-card">
+        <SectionHeading number="1" title="Задание и сессия">
+          {activeTask ? <span className="capture-task-code mono">{activeTask.code}</span> : null}
+        </SectionHeading>
 
-          <div className="segmented-block">
-            <div className="field-title-row">
-              <FieldCaption hint="Фактический свет при съёмке. Это не pH и не цвет лотка, а тип освещения вокруг образца.">
-                Свет
-              </FieldCaption>
-              <button
-                type="button"
-                className="help-button"
-                onClick={() => setShowLightingHelp((value) => !value)}
-                aria-expanded={showLightingHelp}
-              >
-                i
-              </button>
-            </div>
-            {showLightingHelp ? (
-              <div className="help-box">
-                Выберите фактический свет в комнате. Техническое поле для manifest вычисляется
-                автоматически: дневной свет → day, тёплый комнатный → 3000K, холодный комнатный →
-                6000K.
-              </div>
-            ) : null}
-            <div className="segmented-row">
-              {LIGHT_LABELS.map((item) => (
-                <button
-                  key={item.value}
-                  className={form.lightLabel === item.value ? 'active' : ''}
-                  type="button"
-                  onClick={() => update('lightLabel', item.value)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="segmented-block">
-            <FieldCaption hint="Угол съёмки относительно наполнителя. Небольшие отклонения нужны, чтобы проверить устойчивость модели.">
-              Угол
-            </FieldCaption>
-            <div className="segmented-row">
-              {ANGLE_LABELS.map((item) => (
-                <button
-                  key={item.value}
-                  className={form.angleLabel === item.value ? 'active' : ''}
-                  type="button"
-                  onClick={() => update('angleLabel', item.value)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="segmented-block">
-            <div className="field-title-row">
-              <FieldCaption hint="Примерная дистанция от камеры до наполнителя. Главное, чтобы область в пунктирной рамке была заполнена чистым наполнителем.">
-                Дистанция
-              </FieldCaption>
-              <button
-                type="button"
-                className="help-button"
-                onClick={() => setShowDistanceHelp((value) => !value)}
-                aria-expanded={showDistanceHelp}
-              >
-                i
-              </button>
-            </div>
-            {showDistanceHelp ? (
-              <div className="help-box">
-                <ul className="help-list">
-                  <li>
-                    <strong>Обычная:</strong> примерно 35-45 см, наполнитель занимает большую часть
-                    кадра и не обрезан.
-                  </li>
-                  <li>
-                    <strong>Чуть ближе:</strong> примерно 25-35 см, ближе обычного, но пунктирная
-                    область целиком заполнена наполнителем.
-                  </li>
-                  <li>
-                    <strong>Чуть дальше:</strong> примерно 45-60 см, видно больше фона/лотка, но
-                    наполнитель остаётся читаемым.
-                  </li>
-                </ul>
-              </div>
-            ) : null}
-            <div className="segmented-row">
-              {DISTANCE_LABELS.map((item) => (
-                <button
-                  key={item.value}
-                  className={form.distanceLabel === item.value ? 'active' : ''}
-                  type="button"
-                  onClick={() => update('distanceLabel', item.value)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
+        <div className="capture-code-row">
           <label>
-            <FieldCaption hint="Свободный комментарий: что было необычного в съёмке, почему переснимали, какие условия отличались.">
-              Комментарий
-            </FieldCaption>
-            <textarea
-              value={form.notes}
-              onChange={(event) => update('notes', event.target.value)}
-              rows={3}
+            Код задания
+            <input
+              value={form.taskCode}
+              disabled={Boolean(attempt) || restoring}
+              autoCapitalize="characters"
+              autoComplete="off"
+              placeholder="Например, PH400-A1"
+              onChange={(event) => updateForm('taskCode', event.target.value.toUpperCase())}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void lookup();
+                }
+              }}
             />
           </label>
-        </section>
+          <button
+            type="button"
+            className="secondary"
+            disabled={Boolean(attempt) || lookupBusy || restoring}
+            onClick={() => void lookup()}
+          >
+            {lookupBusy ? 'Проверяем…' : 'Проверить код'}
+          </button>
+        </div>
+        <p className="control-hint">
+          PH400…PH780 или blank BL613; можно добавить суффикс, например PH400-A1. Один код на разных
+          телефонах означает один образец.
+        </p>
 
-        <section className="panel capture-photos">
-          <h2>Фотографии</h2>
-          <p className="muted">
-            Пунктирная рамка показывает рабочую область анализа. Проверьте, что в неё попала только
-            чистая область наполнителя, без бортиков, плитки и других деталей.
-          </p>
-          <div className="photo-grid">
-            <PhotoSlot
-              title="Чистый наполнитель"
-              image={reference}
-              onFile={(file) => void handleFile('reference', file)}
-              onRoiChange={(roi) => updateImageRoi('reference', roi)}
-            />
-            <PhotoSlot
-              title="После реакции"
-              image={diagnostic}
-              onFile={(file) => void handleFile('diagnostic', file)}
-              onRoiChange={(roi) => updateImageRoi('diagnostic', roi)}
-            />
+        {activeTask ? (
+          <dl className="capture-task-summary">
+            <div>
+              <dt>Тип</dt>
+              <dd>{activeTask.taskType === 'blank_qc' ? 'Blank QC' : 'После реакции'}</dd>
+            </div>
+            <div>
+              <dt>Исходный pH</dt>
+              <dd>{activeTask.sourcePh}</dd>
+            </div>
+            <div>
+              <dt>Образец</dt>
+              <dd className="mono">{activeTask.specimenId}</dd>
+            </div>
+            <div>
+              <dt>Снимков</dt>
+              <dd>{activeTask.slots.length}</dd>
+            </div>
+          </dl>
+        ) : null}
+
+        <div className="capture-session-grid">
+          <TextField
+            label="Оператор"
+            value={form.operatorId}
+            disabled={Boolean(attempt)}
+            placeholder="Имя или ID"
+            onChange={(value) => updateForm('operatorId', value)}
+          />
+          <TextField
+            label="Устройство"
+            value={form.device}
+            disabled={Boolean(attempt)}
+            placeholder="Модель телефона"
+            onChange={(value) => updateForm('device', value)}
+          />
+          <TextField
+            label="Серия"
+            value={form.series}
+            disabled={Boolean(attempt)}
+            placeholder="V9"
+            onChange={(value) => updateForm('series', value)}
+          />
+        </div>
+
+        <div className="capture-options-grid">
+          <OptionField
+            label="Свет"
+            value={form.lightLabel}
+            options={LIGHTS}
+            disabled={Boolean(attempt)}
+            onChange={(value) => updateForm('lightLabel', value)}
+          />
+          <OptionField
+            label="Угол"
+            value={form.angleLabel}
+            options={ANGLES}
+            disabled={Boolean(attempt)}
+            onChange={(value) => updateForm('angleLabel', value)}
+          />
+          <OptionField
+            label="Расстояние"
+            value={form.distanceLabel}
+            options={DISTANCES}
+            disabled={Boolean(attempt)}
+            onChange={(value) => updateForm('distanceLabel', value)}
+          />
+        </div>
+      </section>
+
+      {attempt && activeTask ? (
+        <section className="capture-slot-section">
+          <SectionHeading number="2" title="Снимки">
+            <span className="muted">
+              {
+                activeTask.slots.filter(
+                  (slot) => drafts[slot.key]?.status === 'saved' && !drafts[slot.key]?.roiDirty,
+                ).length
+              }{' '}
+              / {activeTask.slots.length}
+            </span>
+          </SectionHeading>
+          <div className="capture-slot-list">
+            {activeTask.slots.map((slot) => (
+              <CaptureSlot
+                key={slot.key}
+                slot={slot}
+                draft={drafts[slot.key]}
+                elapsed={elapsed}
+                disabled={finalized || busySlot !== null}
+                onFile={(file) => chooseFile(slot.key, file)}
+                onRoi={(roi) => changeRoi(slot.key, roi)}
+                onSave={() => void saveSlot(slot.key)}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {attempt ? (
+        <section className="panel capture-finalize">
+          <SectionHeading number="3" title="Завершение">
+            {attempt.result ? (
+              <span className="capture-saved-badge">Сохранено</span>
+            ) : (
+              <span className="muted">После всех снимков</span>
+            )}
+          </SectionHeading>
+
+          {attempt.task.taskType === 'blank_qc' ? (
+            <div className="capture-readonly-field">
+              <span>Финальный pH</span>
+              <strong>Для blank не требуется</strong>
+            </div>
+          ) : (
+            <label>
+              Финальный pH смеси, если измерен
+              <input
+                value={finalPh}
+                disabled={finalized}
+                inputMode="decimal"
+                placeholder="Можно оставить пустым"
+                onChange={(event) => setFinalPh(event.target.value)}
+              />
+            </label>
+          )}
+
+          <div className="capture-final-grid">
+            <label>
+              Статус кейса
+              <select
+                value={included ? 'included' : 'excluded'}
+                disabled={finalized}
+                onChange={(event) => setIncluded(event.target.value === 'included')}
+              >
+                <option value="included">Включить в датасет</option>
+                <option value="excluded">Исключить</option>
+              </select>
+            </label>
+            {!included ? (
+              <TextField
+                label="Причина исключения"
+                value={exclusionReason}
+                disabled={finalized}
+                placeholder="Почему кейс нельзя использовать"
+                onChange={setExclusionReason}
+              />
+            ) : null}
           </div>
 
-          <div className="capture-actions">
-            <button type="button" className="secondary" onClick={resetPair} disabled={busy}>
-              Сбросить пару
-            </button>
+          {attempt.result ? (
+            <div className="success">
+              Кейс <span className="mono">{attempt.result.caseId}</span> сохранён{' '}
+              {attempt.result.included ? 'и включён в датасет' : 'как исключённый'}.
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {error ? (
+        <div className="error-box" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="capture-mobile-actions">
+        {!attempt ? (
+          <button
+            type="button"
+            className="primary"
+            disabled={restoring || startBusy || lookupBusy}
+            onClick={() => void start()}
+          >
+            {startBusy ? 'Создаём попытку…' : 'Начать попытку'}
+          </button>
+        ) : finalized ? (
+          <button type="button" className="primary" onClick={newTask}>
+            Новое задание
+          </button>
+        ) : (
+          <>
+            <div className="capture-action-status">
+              <span>{ready ? 'Все обязательные снимки готовы' : 'Сначала сохраните снимки'}</span>
+              {currentSlot ? <strong>{currentSlot.label}</strong> : null}
+            </div>
             <button
               type="button"
               className="primary"
-              onClick={() => void submit()}
-              disabled={!ready}
+              disabled={!ready || finalizeBusy || busySlot !== null}
+              onClick={() => void finish()}
             >
-              {busy ? 'Сохраняю...' : 'Сохранить пару'}
+              {finalizeBusy ? 'Сохраняем…' : 'Завершить и сохранить'}
             </button>
-          </div>
-
-          {delta !== null ? <p className="muted">Интервал между снимками: {delta} сек.</p> : null}
-          {savedCaseId ? (
-            <p className="success">
-              Кейс сохранён: <span className="mono">{savedCaseId}</span>
-            </p>
-          ) : null}
-          {error ? <pre className="error-box">{error}</pre> : null}
-        </section>
+          </>
+        )}
       </div>
     </section>
   );
 }
 
-function PhotoSlot({
-  title,
-  image,
-  onFile,
-  onRoiChange,
-}: {
-  title: string;
-  image: ImageDraft | null;
-  onFile: (file: File | null) => void;
-  onRoiChange: (roi: RoiShape) => void;
+function SectionHeading(props: { number: string; title: string; children?: React.ReactNode }) {
+  return (
+    <div className="capture-section-heading">
+      <div>
+        <span className="capture-step-number">{props.number}</span>
+        <h2>{props.title}</h2>
+      </div>
+      {props.children}
+    </div>
+  );
+}
+
+function TextField(props: {
+  label: string;
+  value: string;
+  disabled: boolean;
+  placeholder: string;
+  onChange: (value: string) => void;
 }) {
   return (
-    <div className="photo-slot">
-      <div className="photo-slot-head">
-        <span>{title}</span>
-        {image ? <span className="muted">{Math.round(image.bytes / 1024)} КБ</span> : null}
+    <label>
+      {props.label}
+      <input
+        required
+        value={props.value}
+        disabled={props.disabled}
+        placeholder={props.placeholder}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function OptionField(props: {
+  label: string;
+  value: string;
+  options: ReadonlyArray<readonly [string, string]>;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label>
+      {props.label}
+      <select
+        value={props.value}
+        disabled={props.disabled}
+        onChange={(event) => props.onChange(event.target.value)}
+      >
+        {props.options.map(([value, label]) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function CaptureSlot(props: {
+  slot: CaptureTaskSlot;
+  draft?: SlotDraft;
+  elapsed: number;
+  disabled: boolean;
+  onFile: (file: File | null) => void;
+  onRoi: (roi: RoiShape) => void;
+  onSave: () => void;
+}) {
+  const { slot, draft } = props;
+  if (!draft) return null;
+  const hasAction = Boolean(draft.file || draft.roiDirty);
+  const uploading = draft.status === 'uploading';
+  const action = draft.file
+    ? draft.status === 'error'
+      ? 'Повторить загрузку'
+      : 'Загрузить оригинал'
+    : 'Сохранить ROI';
+
+  return (
+    <article
+      className={
+        'panel capture-slot-card slot-' + draft.status + (props.disabled ? ' is-locked' : '')
+      }
+    >
+      <div className="capture-slot-head">
+        <div>
+          <span className="capture-slot-kind">
+            {slot.required ? 'Обязательный' : 'Дополнительный'}
+          </span>
+          <h3>{slot.label}</h3>
+        </div>
+        <span className={'slot-status slot-status-' + draft.status}>{slotStatus(draft)}</span>
       </div>
+
+      <div className="capture-slot-timing">
+        <span>{timing(slot, props.elapsed)}</span>
+        {slot.targetSeconds === null ? (
+          <small>Точное целевое время не задано — показываем только прошедшее.</small>
+        ) : null}
+      </div>
+
       <RoiEditor
-        src={image?.previewUrl}
-        alt={title}
-        value={image?.roi ?? null}
-        onChange={onRoiChange}
-        placeholder="Фото не выбрано"
+        src={draft.previewUrl}
+        alt={slot.label}
+        value={draft.roi}
+        onChange={props.disabled ? () => undefined : props.onRoi}
+        allowPolygon={false}
+        compact
+        placeholder={
+          draft.status === 'saved'
+            ? 'Оригинал сохранён; предпросмотр недоступен'
+            : 'Снимите или выберите фото'
+        }
       />
       <p className="roi-guidance">
-        В выбранной области должна быть только чистая область наполнителя. Сдвиньте или измените
-        область так, чтобы внутри не было края лотка, плитки или фона.
+        Внутри рамки должен быть только чистый наполнитель — без бортика, плитки и фона.
       </p>
-      <label className="file-button">
-        Снять / выбрать фото
+
+      <label className={'file-button capture-file-button ' + (props.disabled ? 'is-disabled' : '')}>
+        {draft.previewUrl ? 'Снять / выбрать замену' : 'Снять / выбрать фото'}
         <input
           type="file"
           accept="image/*"
           capture="environment"
-          onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+          disabled={props.disabled}
+          onChange={(event) => {
+            props.onFile(event.target.files?.[0] ?? null);
+            event.currentTarget.value = '';
+          }}
         />
       </label>
-      {image ? (
-        <span className="muted mono">{new Date(image.capturedAt).toLocaleString('ru-RU')}</span>
+
+      {draft.file ? (
+        <div className="capture-file-meta">
+          <span title={draft.file.name}>{draft.file.name}</span>
+          <strong>{(draft.file.size / 1048576).toFixed(2)} МБ</strong>
+        </div>
       ) : null}
-    </div>
+
+      {uploading && draft.progress !== null ? (
+        <div className="capture-upload-progress">
+          <progress max={100} value={draft.progress} aria-label={'Загрузка ' + slot.label} />
+          <span>
+            {draft.progress < 100
+              ? 'Передано ' + draft.progress + '%'
+              : 'Оригинал передан, сервер сохраняет…'}
+          </span>
+        </div>
+      ) : null}
+
+      {draft.error ? (
+        <div className="capture-slot-error" role="alert">
+          {draft.error}
+        </div>
+      ) : null}
+
+      {hasAction ? (
+        <button
+          type="button"
+          className="primary capture-slot-action"
+          disabled={props.disabled || uploading}
+          onClick={props.onSave}
+        >
+          {uploading ? slotStatus(draft) : action}
+        </button>
+      ) : draft.status === 'saved' ? (
+        <div className="capture-slot-success">Оригинал и ROI сохранены</div>
+      ) : null}
+    </article>
   );
 }
