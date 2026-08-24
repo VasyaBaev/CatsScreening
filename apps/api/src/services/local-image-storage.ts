@@ -11,24 +11,40 @@ import { createReadStream } from 'node:fs';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
-import type { UploadImageRequest, UploadImageResponse } from '@cats-screening/shared';
+import type {
+  CaptureAttemptUpload,
+  CaptureSlotKind,
+  UploadImageRequest,
+  UploadImageResponse,
+} from '@cats-screening/shared';
 
-const defaultStorageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../storage');
+const defaultStorageRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../storage',
+);
 const storageRoot = process.env.LOCAL_CAPTURE_STORAGE_DIR
   ? path.resolve(process.env.LOCAL_CAPTURE_STORAGE_DIR)
   : defaultStorageRoot;
 const uploadRoot = path.join(storageRoot, 'uploads');
 
 function sanitizeSegment(value: string): string {
-  const safe = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  const safe = value
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
   return safe || 'item';
 }
 
-function extensionForContentType(contentType: string): string {
+function extensionForContentType(contentType: string, originalFileName?: string): string {
   if (contentType === 'image/png') return '.png';
   if (contentType === 'image/webp') return '.webp';
+  if (contentType === 'image/heic') return '.heic';
+  if (contentType === 'image/heif') return '.heif';
+  if (contentType === 'image/jpeg') return '.jpg';
+  const originalExtension = originalFileName ? path.extname(originalFileName).toLowerCase() : '';
+  if (/^\.[a-z0-9]{1,8}$/.test(originalExtension)) return originalExtension;
   return '.jpg';
 }
 
@@ -72,7 +88,42 @@ export async function saveLocalImage(input: UploadImageRequest): Promise<UploadI
     publicUrl: localPublicUrlFromUri(uri),
     storageProvider: 'local-file',
     bytes: buffer.byteLength,
-    contentType: input.contentType
+    contentType: input.contentType,
+  };
+}
+
+export async function saveLocalAttemptImage(input: {
+  attemptId: string;
+  slotKey: string;
+  kind: CaptureSlotKind;
+  fileName: string;
+  contentType: string;
+  buffer: Buffer;
+}): Promise<CaptureAttemptUpload> {
+  const attemptId = sanitizeSegment(input.attemptId);
+  const slotKey = sanitizeSegment(input.slotKey);
+  const extension = extensionForContentType(input.contentType, input.fileName);
+  const storedFileName = `${slotKey}-${Date.now()}-${randomUUID().slice(0, 8)}${extension}`;
+  const key = normalizeStorageKey(
+    path.posix.join('capture-hotfix', 'uploads', attemptId, storedFileName),
+  );
+  const absolutePath = resolveInsideStorage(key);
+
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, input.buffer);
+
+  const uri = `local://${key}`;
+  return {
+    slotKey: input.slotKey,
+    kind: input.kind,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    bytes: input.buffer.byteLength,
+    sha256: createHash('sha256').update(input.buffer).digest('hex'),
+    uri,
+    publicUrl: localPublicUrlFromUri(uri),
+    savedAt: new Date().toISOString(),
+    roi: null,
   };
 }
 
@@ -85,10 +136,19 @@ export async function openLocalImageByKey(key: string) {
   }
 
   const ext = path.extname(absolutePath).toLowerCase();
-  const contentType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  const contentType =
+    ext === '.png'
+      ? 'image/png'
+      : ext === '.webp'
+        ? 'image/webp'
+        : ext === '.heic'
+          ? 'image/heic'
+          : ext === '.heif'
+            ? 'image/heif'
+            : 'image/jpeg';
 
   return {
     contentType,
-    stream: createReadStream(absolutePath)
+    stream: createReadStream(absolutePath),
   };
 }

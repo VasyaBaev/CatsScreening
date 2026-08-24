@@ -49,7 +49,7 @@ export type CaptureMode = z.infer<typeof CaptureModeSchema>;
 export const ProductionLikeConditionSchema = z.object({
   lightLabel: z.string().min(1),
   angleLabel: z.string().min(1),
-  distanceLabel: z.string().min(1)
+  distanceLabel: z.string().min(1),
 });
 export type ProductionLikeCondition = z.infer<typeof ProductionLikeConditionSchema>;
 
@@ -61,7 +61,7 @@ export type ProductionLikeCondition = z.infer<typeof ProductionLikeConditionSche
 export const CaptureTimingSchema = z.object({
   referenceCapturedAt: z.string().min(1),
   diagnosticCapturedAt: z.string().min(1),
-  captureDeltaSeconds: z.number().min(0).nullable().default(null)
+  captureDeltaSeconds: z.number().min(0).nullable().default(null),
 });
 export type CaptureTiming = z.infer<typeof CaptureTimingSchema>;
 
@@ -75,11 +75,11 @@ export const CaptureClientSchema = z.object({
   viewport: z
     .object({
       width: z.number().int().positive(),
-      height: z.number().int().positive()
+      height: z.number().int().positive(),
     })
     .nullable()
     .default(null),
-  exif: z.record(z.unknown()).optional()
+  exif: z.record(z.unknown()).optional(),
 });
 export type CaptureClient = z.infer<typeof CaptureClientSchema>;
 
@@ -92,11 +92,11 @@ export const RoiRectSchema = z
     x: z.number().min(0).max(1),
     y: z.number().min(0).max(1),
     w: z.number().min(0).max(1),
-    h: z.number().min(0).max(1)
+    h: z.number().min(0).max(1),
   })
   .refine((r) => r.w > 0 && r.h > 0, { message: 'ROI: w/h должны быть > 0' })
   .refine((r) => r.x + r.w <= 1 && r.y + r.h <= 1, {
-    message: 'ROI выходит за границы изображения (x+w или y+h > 1)'
+    message: 'ROI выходит за границы изображения (x+w или y+h > 1)',
   });
 export type RoiRect = z.infer<typeof RoiRectSchema>;
 
@@ -107,7 +107,7 @@ export type RoiRect = z.infer<typeof RoiRectSchema>;
  */
 export const RoiPointSchema = z.object({
   x: z.number().min(0).max(1),
-  y: z.number().min(0).max(1)
+  y: z.number().min(0).max(1),
 });
 export type RoiPoint = z.infer<typeof RoiPointSchema>;
 
@@ -118,18 +118,18 @@ export type RoiPoint = z.infer<typeof RoiPointSchema>;
  */
 const RoiShapeBaseSchema = z.object({
   source: z.enum(['manual', 'fixed', 'auto']).default('manual'),
-  updatedAt: z.string().min(1).optional()
+  updatedAt: z.string().min(1).optional(),
 });
 
 export const RoiShapeSchema = z.discriminatedUnion('shape', [
   RoiShapeBaseSchema.extend({
     shape: z.literal('rect'),
-    rect: RoiRectSchema
+    rect: RoiRectSchema,
   }),
   RoiShapeBaseSchema.extend({
     shape: z.literal('polygon'),
-    points: z.array(RoiPointSchema).min(3).max(64)
-  })
+    points: z.array(RoiPointSchema).min(3).max(64),
+  }),
 ]);
 export type RoiShape = z.infer<typeof RoiShapeSchema>;
 
@@ -139,7 +139,7 @@ export type RoiShape = z.infer<typeof RoiShapeSchema>;
  */
 export const CaseRoiSetSchema = z.object({
   reference: RoiShapeSchema.optional(),
-  diagnostic: RoiShapeSchema.optional()
+  diagnostic: RoiShapeSchema.optional(),
 });
 export type CaseRoiSet = z.infer<typeof CaseRoiSetSchema>;
 
@@ -158,7 +158,7 @@ export const RoiPairLabelSchema = z.object({
   rois: CaseRoiSetSchema,
   note: z.string().nullable().default(null),
   updatedAt: z.string().min(1),
-  updatedBy: z.string().nullable().default(null)
+  updatedBy: z.string().nullable().default(null),
 });
 export type RoiPairLabel = z.infer<typeof RoiPairLabelSchema>;
 
@@ -166,7 +166,7 @@ export const RoiLabelDatasetSchema = z.object({
   version: z.literal(1),
   dataset: z.string().min(1),
   updatedAt: z.string().nullable(),
-  labels: z.record(RoiPairLabelSchema).default({})
+  labels: z.record(RoiPairLabelSchema).default({}),
 });
 export type RoiLabelDataset = z.infer<typeof RoiLabelDatasetSchema>;
 
@@ -177,7 +177,7 @@ export const SaveRoiLabelRequestSchema = z.object({
   status: RoiLabelStatusSchema.default('draft'),
   rois: CaseRoiSetSchema,
   note: z.string().nullable().default(null),
-  updatedBy: z.string().nullable().default(null)
+  updatedBy: z.string().nullable().default(null),
 });
 export type SaveRoiLabelRequest = z.infer<typeof SaveRoiLabelRequestSchema>;
 
@@ -196,7 +196,10 @@ export const CaseMetadataSchema = z.object({
    * Класс для обучения/контроля: 0 = норма, 1 = отклонение/риск.
    * Для реальных пользовательских кейсов в проде значение будет null.
    */
-  class: z.union([z.literal(0), z.literal(1)]).nullable().default(null),
+  class: z
+    .union([z.literal(0), z.literal(1)])
+    .nullable()
+    .default(null),
 
   tray: TraySchema,
   light: LightSchema,
@@ -245,7 +248,7 @@ export const CaseMetadataSchema = z.object({
   rois: CaseRoiSetSchema.optional(),
 
   /** Метаданные браузера/устройства, которые не всегда доступны через EXIF. */
-  client: CaptureClientSchema.optional()
+  client: CaptureClientSchema.optional(),
 });
 export type CaseMetadata = z.infer<typeof CaseMetadataSchema>;
 
@@ -270,10 +273,10 @@ export const CreateCaseRequestSchema = z.object({
          * Ссылка/ключ на изображение.
          * В dev это может быть local URI, в prod — object storage key.
          */
-        uri: z.string().min(1)
-      })
+        uri: z.string().min(1),
+      }),
     )
-    .min(2)
+    .min(2),
 });
 export type CreateCaseRequest = z.infer<typeof CreateCaseRequestSchema>;
 
@@ -287,7 +290,7 @@ export const UploadImageRequestSchema = z.object({
   kind: CaseImageKindSchema,
   fileName: z.string().min(1).max(255),
   contentType: z.string().regex(/^image\/(jpeg|png|webp)$/),
-  dataBase64: z.string().min(1)
+  dataBase64: z.string().min(1),
 });
 export type UploadImageRequest = z.infer<typeof UploadImageRequestSchema>;
 
@@ -300,9 +303,103 @@ export const UploadImageResponseSchema = z.object({
   publicUrl: z.string().nullable(),
   storageProvider: z.string().min(1),
   bytes: z.number().int().nonnegative(),
-  contentType: z.string().min(1)
+  contentType: z.string().min(1),
 });
 export type UploadImageResponse = z.infer<typeof UploadImageResponseSchema>;
+
+export const CaptureTaskTypeSchema = z.enum(['reacted_specimen', 'blank_qc']);
+export type CaptureTaskType = z.infer<typeof CaptureTaskTypeSchema>;
+
+export const CaptureSlotKindSchema = z.enum(['reference', 'diagnostic', 'qc']);
+export type CaptureSlotKind = z.infer<typeof CaptureSlotKindSchema>;
+
+export const CaptureTaskSlotSchema = z
+  .object({
+    key: z.string().regex(/^[a-z0-9_-]+$/),
+    kind: CaptureSlotKindSchema,
+    label: z.string().min(1),
+    required: z.boolean(),
+    targetSeconds: z.number().int().positive().nullable().default(null),
+    toleranceSeconds: z.number().int().nonnegative().nullable().default(null),
+  })
+  .refine(
+    (slot) =>
+      (slot.targetSeconds === null && slot.toleranceSeconds === null) ||
+      (slot.targetSeconds !== null && slot.toleranceSeconds !== null),
+    { message: 'Timed slot должен одновременно задавать targetSeconds и toleranceSeconds' },
+  );
+export type CaptureTaskSlot = z.infer<typeof CaptureTaskSlotSchema>;
+
+export const CaptureTaskSchema = z.object({
+  code: z.string().min(2).max(24),
+  taskType: CaptureTaskTypeSchema,
+  specimenId: z.string().min(1).max(80),
+  sourcePh: z.number().min(0).max(14),
+  slots: z.array(CaptureTaskSlotSchema).min(1),
+});
+export type CaptureTask = z.infer<typeof CaptureTaskSchema>;
+
+export const CaptureAttemptUploadSchema = z.object({
+  slotKey: z.string().min(1),
+  kind: CaptureSlotKindSchema,
+  fileName: z.string().min(1).max(255),
+  contentType: z.string().min(1).max(100),
+  bytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  uri: z.string().min(1),
+  publicUrl: z.string().nullable(),
+  savedAt: z.string().min(1),
+  roi: RoiShapeSchema.nullable().default(null),
+});
+export type CaptureAttemptUpload = z.infer<typeof CaptureAttemptUploadSchema>;
+
+export const CaptureFinalizeResultSchema = z.object({
+  caseId: z.string().uuid(),
+  finalizedAt: z.string().min(1),
+  included: z.boolean(),
+  exclusionReason: z.string().nullable(),
+});
+export type CaptureFinalizeResult = z.infer<typeof CaptureFinalizeResultSchema>;
+
+export const CaptureAttemptSchema = z.object({
+  id: z.string().uuid(),
+  task: CaptureTaskSchema,
+  status: z.enum(['active', 'finalized']),
+  operatorId: z.string().min(1).max(120),
+  device: z.string().min(1).max(160),
+  series: z.string().min(1).max(120),
+  condition: ProductionLikeConditionSchema,
+  reactionStartedAt: z.string().min(1),
+  finalMixturePh: z.number().min(0).max(14).nullable(),
+  uploads: z.record(CaptureAttemptUploadSchema),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  result: CaptureFinalizeResultSchema.nullable(),
+});
+export type CaptureAttempt = z.infer<typeof CaptureAttemptSchema>;
+
+export const CreateCaptureAttemptRequestSchema = z.object({
+  taskCode: z.string().min(2).max(24),
+  operatorId: z.string().min(1).max(120),
+  device: z.string().min(1).max(160),
+  series: z.string().min(1).max(120),
+  lightLabel: z.string().min(1).max(120),
+  angleLabel: z.string().min(1).max(120),
+  distanceLabel: z.string().min(1).max(120),
+});
+export type CreateCaptureAttemptRequest = z.infer<typeof CreateCaptureAttemptRequestSchema>;
+
+export const UpdateCaptureSlotRequestSchema = z.object({
+  roi: RoiShapeSchema,
+});
+export type UpdateCaptureSlotRequest = z.infer<typeof UpdateCaptureSlotRequestSchema>;
+
+export const FinalizeCaptureAttemptRequestSchema = z.object({
+  finalMixturePh: z.number().min(0).max(14).nullable().default(null),
+  included: z.boolean().default(true),
+  exclusionReason: z.string().min(1).max(500).nullable().default(null),
+});
+export type FinalizeCaptureAttemptRequest = z.infer<typeof FinalizeCaptureAttemptRequestSchema>;
 
 /**
  * Запрос на анализ пары reference + diagnostic по ROI.
@@ -312,7 +409,7 @@ export const AnalyzeRequestSchema = z.object({
   referenceUri: z.string().min(1),
   diagnosticUri: z.string().min(1),
   roi: RoiRectSchema,
-  debug: z.boolean().optional().default(false)
+  debug: z.boolean().optional().default(false),
 });
 export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema>;
 

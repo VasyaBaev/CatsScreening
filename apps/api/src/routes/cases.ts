@@ -6,16 +6,211 @@
  * прогонять сбор пар до подключения облачной инфраструктуры.
  */
 
-import { CreateCaseRequestSchema } from '@cats-screening/shared';
+import {
+  CaptureTaskSchema,
+  CreateCaptureAttemptRequestSchema,
+  CreateCaseRequestSchema,
+  FinalizeCaptureAttemptRequestSchema,
+  UpdateCaptureSlotRequestSchema,
+  type CaptureTask,
+} from '@cats-screening/shared';
 import type { Prisma } from '@prisma/client';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 
 import { runQualityChecks } from '@cats-screening/cv-core';
 
-import { appendLocalCase } from '../services/local-capture-store.js';
+import {
+  appendLocalCase,
+  createLocalCaptureAttempt,
+  finalizeLocalCaptureAttempt,
+  getLocalCaptureAttempt,
+  saveLocalAttemptSlotRoi,
+} from '../services/local-capture-store.js';
 import { prisma } from '../services/prisma.js';
 
+const reactedSlots = [
+  {
+    key: 'reference',
+    kind: 'reference' as const,
+    label: 'До реакции',
+    required: true,
+    targetSeconds: null,
+    toleranceSeconds: null,
+  },
+  {
+    key: 'diagnostic',
+    kind: 'diagnostic' as const,
+    label: 'После реакции',
+    required: true,
+    targetSeconds: null,
+    toleranceSeconds: null,
+  },
+];
+
+function reactedTask(code: string, sourcePh: number): CaptureTask {
+  return CaptureTaskSchema.parse({
+    code,
+    taskType: 'reacted_specimen',
+    specimenId: `specimen-${code.toLowerCase()}`,
+    sourcePh,
+    slots: reactedSlots,
+  });
+}
+
+const tasks = new Map<string, CaptureTask>(
+  [
+    reactedTask('PH400', 4.0),
+    reactedTask('PH460', 4.6),
+    reactedTask('PH540', 5.4),
+    reactedTask('PH560', 5.6),
+    reactedTask('PH580', 5.8),
+    reactedTask('PH600', 6.0),
+    reactedTask('PH613', 6.13),
+    reactedTask('PH640', 6.4),
+    reactedTask('PH660', 6.6),
+    reactedTask('PH680', 6.8),
+    reactedTask('PH700', 7.0),
+    reactedTask('PH780', 7.8),
+    CaptureTaskSchema.parse({
+      code: 'BL613',
+      taskType: 'blank_qc',
+      specimenId: 'blank-ph-613',
+      sourcePh: 6.13,
+      slots: [
+        {
+          key: 'reference',
+          kind: 'reference',
+          label: 'Blank — исходный кадр',
+          required: true,
+          targetSeconds: null,
+          toleranceSeconds: null,
+        },
+        {
+          key: 'blank_qc',
+          kind: 'qc',
+          label: 'Blank QC pH 6.13',
+          required: true,
+          targetSeconds: null,
+          toleranceSeconds: null,
+        },
+      ],
+    }),
+  ].map((task) => [task.code, task]),
+);
+
+function taskByCode(code: string): CaptureTask | null {
+  const normalized = code.trim().toUpperCase();
+  const direct = tasks.get(normalized);
+  if (direct) return direct;
+
+  const match =
+    /^(PH(?:400|460|540|560|580|600|613|640|660|680|700|780)|BL613)-([A-Z0-9]{1,12})$/.exec(
+      normalized,
+    );
+  if (!match) return null;
+
+  const baseTask = tasks.get(match[1]);
+  if (!baseTask) return null;
+  return CaptureTaskSchema.parse({
+    ...baseTask,
+    code: normalized,
+    specimenId: `${baseTask.taskType === 'blank_qc' ? 'blank' : 'specimen'}-${normalized.toLowerCase()}`,
+  });
+}
+
+function storeError(reply: FastifyReply, error: unknown) {
+  const message = error instanceof Error ? error.message : 'CAPTURE_STORE_ERROR';
+  if (message === 'ATTEMPT_NOT_FOUND' || message === 'SLOT_NOT_FOUND') {
+    reply.code(404);
+  } else if (
+    message === 'ATTEMPT_FINALIZED' ||
+    message === 'SLOT_UPLOAD_NOT_FOUND' ||
+    message.startsWith('REQUIRED_SLOTS_MISSING:')
+  ) {
+    reply.code(409);
+  } else {
+    throw error;
+  }
+
+  return {
+    error: message.split(':')[0],
+    missingSlots: message.startsWith('REQUIRED_SLOTS_MISSING:')
+      ? message.slice(message.indexOf(':') + 1).split(',')
+      : undefined,
+  };
+}
+
 export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/tasks/:code', async (request, reply) => {
+    const params = request.params as { code: string };
+    const task = taskByCode(params.code);
+    if (!task) {
+      reply.code(404);
+      return { error: 'TASK_NOT_FOUND' };
+    }
+    return { task };
+  });
+
+  app.post('/attempts', async (request, reply) => {
+    const parsed = CreateCaptureAttemptRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'INVALID_ATTEMPT_REQUEST', details: parsed.error.flatten() };
+    }
+
+    const task = taskByCode(parsed.data.taskCode);
+    if (!task) {
+      reply.code(404);
+      return { error: 'TASK_NOT_FOUND' };
+    }
+
+    const attempt = await createLocalCaptureAttempt(task, parsed.data);
+    reply.code(201);
+    return { attempt };
+  });
+
+  app.get('/attempts/:attemptId', async (request, reply) => {
+    const params = request.params as { attemptId: string };
+    try {
+      return { attempt: await getLocalCaptureAttempt(params.attemptId) };
+    } catch (error) {
+      return storeError(reply, error);
+    }
+  });
+
+  app.patch('/attempts/:attemptId/slots/:slotKey', async (request, reply) => {
+    const params = request.params as { attemptId: string; slotKey: string };
+    const parsed = UpdateCaptureSlotRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'INVALID_SLOT_REQUEST', details: parsed.error.flatten() };
+    }
+
+    try {
+      return {
+        attempt: await saveLocalAttemptSlotRoi(params.attemptId, params.slotKey, parsed.data.roi),
+      };
+    } catch (error) {
+      return storeError(reply, error);
+    }
+  });
+
+  app.post('/attempts/:attemptId/finalize', async (request, reply) => {
+    const params = request.params as { attemptId: string };
+    const parsed = FinalizeCaptureAttemptRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'INVALID_FINALIZE_REQUEST', details: parsed.error.flatten() };
+    }
+
+    try {
+      const attempt = await finalizeLocalCaptureAttempt(params.attemptId, parsed.data);
+      return { attempt, result: attempt.result };
+    } catch (error) {
+      return storeError(reply, error);
+    }
+  });
+
   /**
    * Создать кейс.
    *
@@ -28,7 +223,7 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
       reply.code(400);
       return {
         error: 'INVALID_REQUEST',
-        details: parsed.error.flatten()
+        details: parsed.error.flatten(),
       };
     }
 
@@ -46,8 +241,8 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
         qc,
         result: {
           score,
-          confidence
-        }
+          confidence,
+        },
       };
     }
 
@@ -69,10 +264,10 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
         images: {
           create: parsed.data.images.map((image) => ({
             kind: image.kind,
-            uri: image.uri
-          }))
-        }
-      }
+            uri: image.uri,
+          })),
+        },
+      },
     });
 
     return {
@@ -86,8 +281,8 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
          */
         score,
         /** confidence: 0..1, насколько алгоритм уверен. */
-        confidence
-      }
+        confidence,
+      },
     };
   });
 };
