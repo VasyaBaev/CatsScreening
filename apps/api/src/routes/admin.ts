@@ -1,28 +1,17 @@
 /**
- * Внутренняя админка API.
+ * Admin API новой capture-серии.
  *
- * Здесь есть два источника данных:
- * - Postgres, когда задан `DATABASE_URL`;
- * - локальный JSONL-manifest, когда credentials ещё нет.
- * Такой fallback нужен именно для capture pilot: сайт можно запустить локально,
- * собрать пары и выгрузить manifest без облачной инфраструктуры.
+ * Новые кейсы читаются только из capture-hotfix/cases.jsonl. Legacy manifest и
+ * Postgres не подмешиваются в counters/export и физически остаются нетронутыми.
  */
 
-import { CaseMetadataSchema } from '@cats-screening/shared';
 import type { FastifyPluginAsync } from 'fastify';
 
-import { listAllLocalCases, listLocalCases } from '../services/local-capture-store.js';
+import { listFreshCaptureCases, type FreshCaptureCase } from '../services/local-capture-store.js';
 import { localPublicUrlFromUri } from '../services/local-image-storage.js';
-import { prisma } from '../services/prisma.js';
 
-type CaseListItem = {
-  id: string;
-  createdAt: string;
-  score: number | null;
-  confidence: number | null;
-  metadata: unknown;
-  qc: unknown;
-  images: Array<{ kind: string; uri: string; publicUrl?: string | null }>;
+type AdminCaseListItem = Omit<FreshCaptureCase, 'images'> & {
+  images: Array<FreshCaptureCase['images'][number] & { publicUrl: string | null }>;
 };
 
 function csvCell(value: unknown): string {
@@ -31,171 +20,106 @@ function csvCell(value: unknown): string {
   const text = String(value);
   const needsQuotes = /[",\r\n]/.test(text);
   const escaped = text.replaceAll('"', '""');
-  return needsQuotes ? `"${escaped}"` : escaped;
+  return needsQuotes ? '"' + escaped + '"' : escaped;
 }
 
-function normalizeMetadata(metadata: unknown): unknown {
-  const parsed = CaseMetadataSchema.safeParse(metadata);
-  return parsed.success ? parsed.data : metadata;
+function enrichCase(item: FreshCaptureCase): AdminCaseListItem {
+  return {
+    ...item,
+    images: item.images.map((image) => ({
+      ...image,
+      publicUrl: localPublicUrlFromUri(image.uri),
+    })),
+  };
 }
 
-function enrichImages(images: Array<{ kind: string; uri: string }>): Array<{ kind: string; uri: string; publicUrl?: string | null }> {
-  return images.map((image) => ({
-    ...image,
-    publicUrl: localPublicUrlFromUri(image.uri)
-  }));
-}
-
-function metadataValue(metadata: any, path: string): unknown {
-  return path.split('.').reduce((value, key) => (value == null ? undefined : value[key]), metadata);
-}
-
-async function readCases(limit?: number, offset = 0): Promise<CaseListItem[]> {
-  if (!process.env.DATABASE_URL) {
-    const local = limit == null ? await listAllLocalCases() : await listLocalCases(limit, offset);
-    return local.map((item) => ({
-      id: item.id,
-      createdAt: item.createdAt,
-      score: item.score,
-      confidence: item.confidence,
-      metadata: normalizeMetadata(item.metadata),
-      qc: item.qc,
-      images: enrichImages(item.images)
-    }));
-  }
-
-  if (!prisma) {
-    throw new Error('DATABASE_URL не задан, Prisma client недоступен');
-  }
-
-  const cases = await prisma.case.findMany({
-    ...(limit == null ? {} : { take: limit, skip: offset }),
-    orderBy: { createdAt: 'desc' },
-    include: { images: true }
-  });
-
-  return cases.map((c) => ({
-    id: c.id,
-    createdAt: c.createdAt.toISOString(),
-    score: c.score,
-    confidence: c.confidence,
-    metadata: normalizeMetadata(c.metadata),
-    qc: c.qc,
-    images: enrichImages(c.images.map((img) => ({ kind: img.kind, uri: img.uri })))
-  }));
-}
-
-function buildCsv(cases: CaseListItem[]): string {
+function buildCsv(cases: FreshCaptureCase[]): string {
   const header = [
     'id',
+    'attemptId',
     'createdAt',
-    'score',
-    'confidence',
+    'included',
+    'exclusionReason',
     'series',
-    'pairId',
-    'captureMode',
+    'taskCode',
+    'taskType',
+    'specimenId',
+    'sourcePh',
+    'finalMixturePh',
     'operatorId',
     'device',
-    'tray',
-    'light',
-    'location',
-    'referencePh',
-    'diagnosticPh',
-    'diagnosticBand',
-    'class',
     'condition.lightLabel',
     'condition.angleLabel',
     'condition.distanceLabel',
-    'capture.referenceCapturedAt',
-    'capture.diagnosticCapturedAt',
-    'capture.captureDeltaSeconds',
-    'qc.blur',
-    'qc.glare',
-    'qc.dark',
-    'reference.uri',
-    'diagnostic.uri'
+    'reactionStartedAt',
+    'imageCount',
+    'images',
   ];
-
   const lines = [header.join(',')];
 
-  for (const c of cases) {
-    const metadata = normalizeMetadata(c.metadata) as any;
-    const qc = (c.qc ?? {}) as any;
-    const ref = c.images.find((i) => i.kind === 'reference')?.uri ?? '';
-    const diag = c.images.find((i) => i.kind === 'diagnostic')?.uri ?? '';
-
-    const row = [
-      c.id,
-      c.createdAt,
-      c.score ?? '',
-      c.confidence ?? '',
-      metadata?.series ?? '',
-      metadata?.pairId ?? '',
-      metadata?.captureMode ?? '',
-      metadata?.operatorId ?? '',
-      metadata?.device ?? '',
-      metadata?.tray ?? '',
-      metadata?.light ?? '',
-      metadata?.location ?? '',
-      metadata?.referencePh ?? '',
-      metadata?.diagnosticPh ?? metadata?.pH ?? '',
-      metadata?.diagnosticBand ?? '',
-      metadata?.class ?? '',
-      metadataValue(metadata, 'condition.lightLabel') ?? '',
-      metadataValue(metadata, 'condition.angleLabel') ?? '',
-      metadataValue(metadata, 'condition.distanceLabel') ?? '',
-      metadataValue(metadata, 'capture.referenceCapturedAt') ?? '',
-      metadataValue(metadata, 'capture.diagnosticCapturedAt') ?? '',
-      metadataValue(metadata, 'capture.captureDeltaSeconds') ?? '',
-      qc?.blur ?? '',
-      qc?.glare ?? '',
-      qc?.dark ?? '',
-      ref,
-      diag
-    ].map(csvCell);
-
-    lines.push(row.join(','));
+  for (const item of cases) {
+    lines.push(
+      [
+        item.id,
+        item.attemptId,
+        item.createdAt,
+        item.included,
+        item.exclusionReason,
+        item.series,
+        item.taskCode,
+        item.taskType,
+        item.specimenId,
+        item.sourcePh,
+        item.finalMixturePh,
+        item.operatorId,
+        item.device,
+        item.condition.lightLabel,
+        item.condition.angleLabel,
+        item.condition.distanceLabel,
+        item.reactionStartedAt,
+        item.images.length,
+        JSON.stringify(item.images),
+      ]
+        .map(csvCell)
+        .join(','),
+    );
   }
 
-  return `${lines.join('\r\n')}\r\n`;
+  return lines.join('\r\n') + '\r\n';
 }
 
 export const registerAdminRoutes: FastifyPluginAsync = async (app) => {
-  /** Список кейсов с простой offset/limit пагинацией. */
   app.get('/cases', async (request) => {
     const query = (request.query ?? {}) as { limit?: string; offset?: string };
     const limitRaw = Number(query.limit ?? 50);
     const offsetRaw = Number(query.offset ?? 0);
-
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
     const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
-    const items = await readCases(limit, offset);
+    const cases = await listFreshCaptureCases();
+    const items = cases.slice(offset, offset + limit).map(enrichCase);
 
     return {
-      source: process.env.DATABASE_URL ? 'postgres' : 'local-jsonl',
+      source: 'capture-hotfix-jsonl',
       page: {
         limit,
         offset,
-        nextOffset: offset + items.length
+        nextOffset: offset + items.length,
       },
-      items
+      items,
     };
   });
 
-  /** CSV-выгрузка для таблиц и ручного контроля квот. */
   app.get('/export.csv', async (_request, reply) => {
-    const cases = await readCases();
-    const csv = buildCsv(cases);
+    const csv = buildCsv(await listFreshCaptureCases());
 
     reply.header('content-type', 'text/csv; charset=utf-8');
     reply.header('content-disposition', 'attachment; filename="cases.csv"');
     return csv;
   });
 
-  /** JSONL-выгрузка для ML-pipeline и будущего catalog builder. */
   app.get('/export.jsonl', async (_request, reply) => {
-    const cases = await readCases();
-    const jsonl = `${cases.map((item) => JSON.stringify(item)).join('\r\n')}\r\n`;
+    const cases = await listFreshCaptureCases();
+    const jsonl = cases.map((item) => JSON.stringify(item)).join('\r\n') + '\r\n';
 
     reply.header('content-type', 'application/x-ndjson; charset=utf-8');
     reply.header('content-disposition', 'attachment; filename="cases.jsonl"');

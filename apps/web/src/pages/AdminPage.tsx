@@ -1,20 +1,44 @@
 /**
- * Внутренняя админка capture dataset.
- *
- * Экран показывает последние кейсы, быстрые счётчики по pH-band и ссылки на CSV/JSONL export.
- * Данные приходят из Postgres или локального JSONL fallback, в зависимости от конфигурации API.
+ * Desktop-админка новой capture-серии.
+ * Counters и exports намеренно не смешиваются с legacy manifest.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 
+type AdminImage = {
+  slotKey: string;
+  kind: string;
+  fileName: string;
+  contentType: string;
+  bytes: number;
+  sha256: string;
+  uri: string;
+  publicUrl: string | null;
+  savedAt: string;
+  roi: unknown;
+};
+
 type AdminCaseListItem = {
   id: string;
+  attemptId: string;
   createdAt: string;
-  score: number | null;
-  confidence: number | null;
-  metadata: any;
-  qc: any;
-  images: Array<{ kind: string; uri: string; publicUrl?: string | null }>;
+  included: boolean;
+  exclusionReason: string | null;
+  taskCode: string;
+  taskType: 'reacted_specimen' | 'blank_qc';
+  specimenId: string;
+  sourcePh: number;
+  finalMixturePh: number | null;
+  operatorId: string;
+  device: string;
+  series: string;
+  condition: {
+    lightLabel: string;
+    angleLabel: string;
+    distanceLabel: string;
+  };
+  reactionStartedAt: string;
+  images: AdminImage[];
 };
 
 type AdminCasesResponse = {
@@ -23,47 +47,24 @@ type AdminCasesResponse = {
   items: AdminCaseListItem[];
 };
 
-type AdminRow = AdminCaseListItem & {
-  series: string;
-  pairId: string;
-  diagnosticPh: string;
-  diagnosticBand: string;
-  device: string;
-  condition: string;
-  referenceUri: string;
-  diagnosticUri: string;
-  referenceUrl: string | null;
-  diagnosticUrl: string | null;
-};
-
-function bandText(value: string): string {
-  if (value === 'low') return 'Ниже нормы';
-  if (value === 'normal') return 'Норма';
-  if (value === 'high') return 'Выше нормы';
-  return value;
+function taskTypeText(value: AdminCaseListItem['taskType']): string {
+  return value === 'blank_qc' ? 'Blank QC' : 'После реакции';
 }
 
-function lightText(value: string | undefined): string {
-  if (value === 'daylight') return 'дневной свет';
-  if (value === 'warm_indoor') return 'тёплый комнатный';
-  if (value === 'cool_indoor') return 'холодный комнатный';
-  if (value === 'mixed_indoor') return 'смешанный';
-  return value ?? '';
+function conditionText(item: AdminCaseListItem): string {
+  return [item.condition.lightLabel, item.condition.angleLabel, item.condition.distanceLabel]
+    .filter(Boolean)
+    .join(' / ');
 }
 
-function angleText(value: string | undefined): string {
-  if (value === 'straight') return 'ровно сверху';
-  if (value === 'slight_left') return 'наклон слева';
-  if (value === 'slight_right') return 'наклон справа';
-  if (value === 'slight_top') return 'наклон сверху';
-  return value ?? '';
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return bytes + ' Б';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' КБ';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
 }
 
-function distanceText(value: string | undefined): string {
-  if (value === 'normal') return 'обычная дистанция';
-  if (value === 'slightly_near') return 'чуть ближе';
-  if (value === 'slightly_far') return 'чуть дальше';
-  return value ?? '';
+function formatPh(value: number | null): string {
+  return value === null ? '—' : String(value);
 }
 
 export function AdminPage() {
@@ -83,7 +84,7 @@ export function AdminPage() {
         const response = await fetch('/api/admin/cases?limit=100&offset=0');
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
-          throw new Error(`Ошибка API (${response.status}): ${JSON.stringify(body)}`);
+          throw new Error('Ошибка API (' + response.status + '): ' + JSON.stringify(body));
         }
 
         const data = (await response.json()) as AdminCasesResponse;
@@ -91,60 +92,30 @@ export function AdminPage() {
           setItems(data.items ?? []);
           setSource(data.source ?? 'unknown');
         }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        if (!cancelled) setError(message);
+      } catch (reason) {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
     void load();
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const rows = useMemo<AdminRow[]>(() => {
-    return items.map((item) => {
-      const metadata = item.metadata ?? {};
-      const ref = item.images.find((i) => i.kind === 'reference');
-      const diag = item.images.find((i) => i.kind === 'diagnostic');
-      const condition = [
-        lightText(metadata.condition?.lightLabel),
-        angleText(metadata.condition?.angleLabel),
-        distanceText(metadata.condition?.distanceLabel),
-      ]
-        .filter(Boolean)
-        .join(' / ');
-
-      return {
-        ...item,
-        series: metadata.series ?? '',
-        pairId: metadata.pairId ?? '',
-        diagnosticPh: String(metadata.diagnosticPh ?? metadata.pH ?? ''),
-        diagnosticBand: bandText(metadata.diagnosticBand ?? ''),
-        device: metadata.device ?? '',
-        condition,
-        referenceUri: ref?.uri ?? '',
-        diagnosticUri: diag?.uri ?? '',
-        referenceUrl: ref?.publicUrl ?? null,
-        diagnosticUrl: diag?.publicUrl ?? null,
-      };
-    });
-  }, [items]);
-
-  const counters = useMemo(() => {
-    const result = { low: 0, normal: 0, high: 0, unknown: 0 };
-    for (const row of rows) {
-      if (row.diagnosticBand === 'low') result.low += 1;
-      else if (row.diagnosticBand === 'normal') result.normal += 1;
-      else if (row.diagnosticBand === 'high') result.high += 1;
-      else result.unknown += 1;
-    }
-    return result;
-  }, [rows]);
+  const counters = useMemo(
+    () => ({
+      total: items.length,
+      included: items.filter((item) => item.included).length,
+      excluded: items.filter((item) => !item.included).length,
+      blank: items.filter((item) => item.taskType === 'blank_qc').length,
+    }),
+    [items],
+  );
 
   return (
     <section className="admin-shell">
@@ -152,7 +123,8 @@ export function AdminPage() {
         <div>
           <h1>Админка съёмки</h1>
           <p className="muted">
-            Источник данных: <span className="mono">{source}</span>
+            Новая серия: <span className="mono">{source}</span>. Legacy-архив не входит в counters и
+            exports.
           </p>
         </div>
         <div className="admin-actions">
@@ -171,16 +143,16 @@ export function AdminPage() {
       </div>
 
       <div className="counter-row">
-        <Counter label="Ниже нормы" value={counters.low} />
-        <Counter label="Норма" value={counters.normal} />
-        <Counter label="Выше нормы" value={counters.high} />
-        <Counter label="Неизвестно" value={counters.unknown} />
+        <Counter label="Всего" value={counters.total} />
+        <Counter label="Включено" value={counters.included} />
+        <Counter label="Исключено" value={counters.excluded} />
+        <Counter label="Blank QC" value={counters.blank} />
       </div>
 
       {loading ? (
         <p className="muted">Загрузка...</p>
       ) : (
-        <p className="muted">Кейсов: {rows.length}</p>
+        <p className="muted">Кейсов: {items.length}</p>
       )}
       {error ? <pre className="error-box">{error}</pre> : null}
 
@@ -191,53 +163,64 @@ export function AdminPage() {
               {[
                 'создано',
                 'серия',
-                'ID пары',
-                'pH',
-                'диапазон',
+                'статус',
+                'task code',
+                'тип',
+                'source pH',
+                'final pH',
+                'specimen',
                 'устройство',
+                'оператор',
                 'условия',
-                'чистый снимок',
-                'снимок после реакции',
+                'причина исключения',
+                'фото',
               ].map((header) => (
                 <th key={header}>{header}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td>{new Date(row.createdAt).toLocaleString('ru-RU')}</td>
-                <td>{row.series}</td>
-                <td className="mono compact-cell" title={row.pairId}>
-                  {row.pairId}
+            {items.map((item) => (
+              <tr key={item.id}>
+                <td>{new Date(item.createdAt).toLocaleString('ru-RU')}</td>
+                <td>{item.series}</td>
+                <td>{item.included ? 'включён' : 'исключён'}</td>
+                <td className="mono">{item.taskCode}</td>
+                <td>{taskTypeText(item.taskType)}</td>
+                <td>{formatPh(item.sourcePh)}</td>
+                <td>{formatPh(item.finalMixturePh)}</td>
+                <td className="mono compact-cell" title={item.specimenId}>
+                  {item.specimenId}
                 </td>
-                <td>{row.diagnosticPh}</td>
-                <td>{row.diagnosticBand}</td>
-                <td>{row.device}</td>
-                <td>{row.condition}</td>
+                <td>{item.device}</td>
+                <td>{item.operatorId}</td>
+                <td>{conditionText(item)}</td>
+                <td>{item.exclusionReason ?? '—'}</td>
                 <td className="compact-cell">
-                  {row.referenceUrl ? (
-                    <a href={row.referenceUrl} target="_blank" rel="noreferrer">
-                      открыть
-                    </a>
-                  ) : (
-                    <span title={row.referenceUri}>{row.referenceUri}</span>
-                  )}
-                </td>
-                <td className="compact-cell">
-                  {row.diagnosticUrl ? (
-                    <a href={row.diagnosticUrl} target="_blank" rel="noreferrer">
-                      открыть
-                    </a>
-                  ) : (
-                    <span title={row.diagnosticUri}>{row.diagnosticUri}</span>
-                  )}
+                  {item.images.map((image) => (
+                    <div key={image.slotKey + image.uri}>
+                      {image.publicUrl ? (
+                        <a
+                          href={image.publicUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={'SHA-256: ' + image.sha256}
+                        >
+                          {image.slotKey} · {formatBytes(image.bytes)}
+                        </a>
+                      ) : (
+                        <span title={image.uri}>
+                          {image.slotKey} · {formatBytes(image.bytes)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </td>
               </tr>
             ))}
-            {!loading && rows.length === 0 ? (
+            {!loading && items.length === 0 ? (
               <tr>
-                <td colSpan={9}>Данных пока нет</td>
+                <td colSpan={13}>Новая серия пока пуста</td>
               </tr>
             ) : null}
           </tbody>

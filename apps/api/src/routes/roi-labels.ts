@@ -7,16 +7,14 @@
  */
 
 import {
-  CaseMetadataSchema,
   SaveRoiLabelRequestSchema,
   derivePhBand,
-  type CaseMetadata,
   type CaseRoiSet,
   type PhBand,
 } from '@cats-screening/shared';
 import type { FastifyPluginAsync } from 'fastify';
 
-import { listAllLocalCases, type LocalStoredCase } from '../services/local-capture-store.js';
+import { listFreshCaptureCases, type FreshCaptureCase } from '../services/local-capture-store.js';
 import { localPublicUrlFromUri } from '../services/local-image-storage.js';
 import { readLocalRoiLabels, saveLocalRoiLabel } from '../services/local-roi-label-store.js';
 import { requireRoiAuth, roiAuthUser } from '../services/roi-auth.js';
@@ -41,68 +39,48 @@ type V9RoiPair = {
   operatorId: string | null;
 };
 
-function parseMetadata(metadata: unknown): CaseMetadata | null {
-  const parsed = CaseMetadataSchema.safeParse(metadata);
-  return parsed.success ? parsed.data : null;
+type FreshImage = FreshCaptureCase['images'][number];
+
+function captureDeltaSeconds(reference: FreshImage, diagnostic: FreshImage): number | null {
+  const milliseconds =
+    new Date(diagnostic.savedAt).getTime() - new Date(reference.savedAt).getTime();
+  return Number.isFinite(milliseconds) ? Math.max(0, Math.round(milliseconds / 1000)) : null;
 }
 
-function isV9Capture(metadata: CaseMetadata | null): boolean {
-  return metadata?.series?.trim().toUpperCase() === 'V9';
+function initialRois(reference: FreshImage, diagnostic: FreshImage): CaseRoiSet | undefined {
+  if (!reference.roi || !diagnostic.roi) return undefined;
+  return { reference: reference.roi, diagnostic: diagnostic.roi };
 }
 
-function imageUrl(item: LocalStoredCase, kind: 'reference' | 'diagnostic'): string | null {
-  const image = item.images.find((candidate) => candidate.kind === kind);
-  if (!image) return null;
-  return localPublicUrlFromUri(image.uri);
-}
+function toV9RoiPair(item: FreshCaptureCase): V9RoiPair | null {
+  const reference = item.images.find((image) => image.kind === 'reference');
+  const diagnostic =
+    item.images.find((image) => image.kind === 'diagnostic') ??
+    item.images.find((image) => image.kind === 'qc');
+  if (!reference || !diagnostic) return null;
 
-function diagnosticPh(metadata: CaseMetadata): number {
-  return metadata.diagnosticPh ?? metadata.pH ?? metadata.referencePh ?? 6.13;
-}
-
-function diagnosticZone(metadata: CaseMetadata, ph: number): PhBand {
-  return metadata.diagnosticBand ?? derivePhBand(ph);
-}
-
-function qcWarnings(qc: unknown): string[] {
-  if (!qc || typeof qc !== 'object') return [];
-
-  const flags = qc as Partial<Record<'blur' | 'glare' | 'dark', unknown>>;
-  const warnings: string[] = [];
-  if (flags.blur === true) warnings.push('blur');
-  if (flags.glare === true) warnings.push('glare');
-  if (flags.dark === true) warnings.push('dark');
-  return warnings;
-}
-
-function toV9RoiPair(item: LocalStoredCase): V9RoiPair | null {
-  const metadata = parseMetadata(item.metadata);
-  if (!metadata || !isV9Capture(metadata)) return null;
-
-  const referenceUrl = imageUrl(item, 'reference');
-  const diagnosticUrl = imageUrl(item, 'diagnostic');
+  const referenceUrl = localPublicUrlFromUri(reference.uri);
+  const diagnosticUrl = localPublicUrlFromUri(diagnostic.uri);
   if (!referenceUrl || !diagnosticUrl) return null;
 
-  const ph = diagnosticPh(metadata);
-
   return {
-    id: metadata.pairId ?? item.id,
+    id: item.id,
     caseId: item.id,
     labelDataset: 'v9',
-    kind: metadata.condition?.angleLabel ?? 'production_like',
-    device: metadata.device ?? 'unknown',
-    lightCct: metadata.condition?.lightLabel ?? metadata.light,
-    pH: ph,
-    zone: diagnosticZone(metadata, ph),
+    kind: item.taskType === 'blank_qc' ? 'blank_qc' : item.condition.angleLabel,
+    device: item.device,
+    lightCct: item.condition.lightLabel,
+    pH: item.sourcePh,
+    zone: derivePhBand(item.sourcePh),
     sourceVersion: 'V9',
-    captureDeltaSec: metadata.capture?.captureDeltaSeconds ?? null,
-    warnings: qcWarnings(item.qc),
+    captureDeltaSec: captureDeltaSeconds(reference, diagnostic),
+    warnings: item.included ? [] : ['excluded'],
     referenceUrl,
     diagnosticUrl,
     features: {},
-    initialRois: metadata.rois,
+    initialRois: initialRois(reference, diagnostic),
     createdAt: item.createdAt,
-    operatorId: metadata.operatorId ?? null,
+    operatorId: item.operatorId,
   };
 }
 
@@ -137,7 +115,7 @@ export const registerRoiLabelRoutes: FastifyPluginAsync = async (app) => {
       };
     }
 
-    const cases = await listAllLocalCases();
+    const cases = await listFreshCaptureCases();
     const pairs = cases.flatMap((item) => {
       const pair = toV9RoiPair(item);
       return pair ? [pair] : [];
