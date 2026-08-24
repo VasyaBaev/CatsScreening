@@ -1,0 +1,131 @@
+{
+  "version": 2,
+  "generatedAt": "2026-06-25T05:26:11.381Z",
+  "kind": "ph-existing-data-wave2-source-aware-summary",
+  "best": {
+    "v1Manual": {
+      "id": "v1-manual-core-knn-reg-weighted-k5",
+      "candidate": "knn-reg-weighted-k5",
+      "roiStrategy": "manual",
+      "featureSet": "core",
+      "trainSource": "V1",
+      "testSource": "V1",
+      "metrics": {
+        "n": 45,
+        "n0": 30,
+        "n1": 15,
+        "tp0": 17,
+        "tp1": 9,
+        "recall0": 0.5667,
+        "recall1": 0.6,
+        "balancedAccuracy": 0.5833,
+        "accuracy": 0.5778,
+        "pHMae": 0.9125,
+        "falseNormalLow": {
+          "count": 3,
+          "total": 9,
+          "rate": 0.3333
+        },
+        "falseNormalHigh": {
+          "count": 3,
+          "total": 6,
+          "rate": 0.5
+        }
+      }
+    },
+    "trainV1TestV5": {
+      "id": "train-v1-test-v5-core-knn-reg-weighted-k5",
+      "candidate": "knn-reg-weighted-k5",
+      "roiStrategy": "manual->fixed-center",
+      "featureSet": "core",
+      "trainSource": "V1",
+      "testSource": "V5-V8",
+      "metrics": {
+        "n": 48,
+        "n0": 8,
+        "n1": 40,
+        "tp0": 7,
+        "tp1": 17,
+        "recall0": 0.875,
+        "recall1": 0.425,
+        "balancedAccuracy": 0.65,
+        "accuracy": 0.5,
+        "pHMae": 0.8351,
+        "falseNormalLow": {
+          "count": 13,
+          "total": 20,
+          "rate": 0.65
+        },
+        "falseNormalHigh": {
+          "count": 10,
+          "total": 20,
+          "rate": 0.5
+        }
+      }
+    },
+    "trainV5TestV1": {
+      "id": "train-v5-test-v1-core-knn-reg-weighted-k3",
+      "candidate": "knn-reg-weighted-k3",
+      "roiStrategy": "fixed-center->manual",
+      "featureSet": "core",
+      "trainSource": "V5-V8",
+      "testSource": "V1",
+      "metrics": {
+        "n": 45,
+        "n0": 30,
+        "n1": 15,
+        "tp0": 17,
+        "tp1": 10,
+        "recall0": 0.5667,
+        "recall1": 0.6667,
+        "balancedAccuracy": 0.6167,
+        "accuracy": 0.6,
+        "pHMae": 0.8203,
+        "falseNormalLow": {
+          "count": 3,
+          "total": 9,
+          "rate": 0.3333
+        },
+        "falseNormalHigh": {
+          "count": 2,
+          "total": 6,
+          "rate": 0.3333
+        }
+      }
+    },
+    "mixedPooled": {
+      "id": "mixed-pooled-core-knn-reg-weighted-k5",
+      "candidate": "knn-reg-weighted-k5",
+      "roiStrategy": "manual+fixed-center",
+      "featureSet": "core",
+      "trainSource": "V1",
+      "testSource": "V1",
+      "metrics": {
+        "n": 93,
+        "n0": 38,
+        "n1": 55,
+        "tp0": 23,
+        "tp1": 39,
+        "recall0": 0.6053,
+        "recall1": 0.7091,
+        "balancedAccuracy": 0.6572,
+        "accuracy": 0.6667,
+        "pHMae": 0.8216,
+        "falseNormalLow": {
+          "count": 11,
+          "total": 29,
+          "rate": 0.3793
+        },
+        "falseNormalHigh": {
+          "count": 5,
+          "total": 26,
+          "rate": 0.1923
+        }
+      }
+    }
+  },
+  "apiDecision": {
+    "recommendedForApiNow": false,
+    "reason": "Wave 2 validates source/domain gap. It does not produce a field-validated production model."
+  }
+}

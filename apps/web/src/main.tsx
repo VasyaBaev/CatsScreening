@@ -1,17 +1,11 @@
 /**
  * Точка входа фронтенда.
- *
- * Задача фронтенда (MVP):
- * - анкета,
- * - шаг “эталон” (reference),
- * - шаг “диагностика” (diagnostic),
- * - показ результата (score/confidence + QC-подсказки),
- * - внутренняя панель `/admin`.
  */
 
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import './styles.css';
 
 const container = document.getElementById('root');
 if (!container) {
@@ -19,4 +13,3 @@ if (!container) {
 }
 
 createRoot(container).render(<App />);
-

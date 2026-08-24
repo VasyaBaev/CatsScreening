@@ -28,6 +28,20 @@
 ## Где лежат фото
 - pH‑датасет: `sources/Photos/PH/`
 
+## Dataset pipeline (первые фото)
+Документация: `docs/dataset/README.md`
+Инструкция для заказчика: `docs/dataset/customer-roi-guide.md`
+План Pipeline v0: `docs/pipeline/v0-plan.md`
+Prompt для следующего треда: `docs/pipeline/next-thread-prompt.md`
+
+Быстрые команды:
+- `npm run dataset:manifest` — пересобрать `manifest-v1.json` и `blind-set-v1.json`
+- `npm run roi:start` — запустить локальную страницу ROI-разметки
+- `npm run roi:check` — проверить полноту и корректность ROI-разметки
+- `npm run roi:publish` — закоммитить и отправить ROI-разметку в GitHub
+- `npm run pipeline:calibrate` — собрать `data/models/calibration-v0.json` (требует ROI разметку)
+- `npm run pipeline:eval` — прогнать blind set и сохранить отчёт в `data/eval/`
+
 ## Запуск (после установки зависимостей)
 Команды выполняются из PowerShell в корне проекта.
 

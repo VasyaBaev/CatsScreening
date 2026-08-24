@@ -1,33 +1,35 @@
 /**
  * Корневой компонент приложения.
  *
- * Важно:
- * - держим и “пользовательский” флоу, и `/admin` в одном приложении,
- *   чтобы не плодить отдельные деплои на старте.
+ * В MVP держим capture flow, `/admin` и ROI-разметку в одном web app,
+ * чтобы локальный запуск и VPS-деплой были проще.
  */
 
 import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
 
 import { AdminPage } from './pages/AdminPage';
-import { UserFlowPage } from './pages/UserFlowPage';
+import { CapturePage } from './pages/CapturePage';
+import { RoiLabelPage } from './pages/RoiLabelPage';
 
 export function App() {
   return (
     <BrowserRouter>
-      <header style={{ padding: 16, borderBottom: '1px solid #eee' }}>
-        <nav style={{ display: 'flex', gap: 12 }}>
-          <Link to="/">Скрининг</Link>
+      <header className="app-header">
+        <nav className="app-nav">
+          <Link to="/capture">Съёмка</Link>
           <Link to="/admin">Админка</Link>
+          <Link to="/roi-labeling">Разметка ROI</Link>
         </nav>
       </header>
 
-      <main style={{ padding: 16 }}>
+      <main className="app-main">
         <Routes>
-          <Route path="/" element={<UserFlowPage />} />
+          <Route path="/" element={<CapturePage />} />
+          <Route path="/capture" element={<CapturePage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/roi-labeling" element={<RoiLabelPage />} />
         </Routes>
       </main>
     </BrowserRouter>
   );
 }
-

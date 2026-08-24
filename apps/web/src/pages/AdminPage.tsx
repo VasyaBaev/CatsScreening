@@ -1,11 +1,8 @@
 /**
- * Внутренняя админка (заглушка).
+ * Внутренняя админка capture dataset.
  *
- * Цели MVP (из документов):
- * - список кейсов,
- * - фильтры/поиск,
- * - выгрузка CSV,
- * - просмотр фото и метаданных.
+ * Экран показывает последние кейсы, быстрые счётчики по pH-band и ссылки на CSV/JSONL export.
+ * Данные приходят из Postgres или локального JSONL fallback, в зависимости от конфигурации API.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -17,20 +14,63 @@ type AdminCaseListItem = {
   confidence: number | null;
   metadata: any;
   qc: any;
-  images: Array<{ kind: string; uri: string }>;
+  images: Array<{ kind: string; uri: string; publicUrl?: string | null }>;
 };
 
 type AdminCasesResponse = {
+  source: string;
   page: { limit: number; offset: number; nextOffset: number };
   items: AdminCaseListItem[];
 };
 
+type AdminRow = AdminCaseListItem & {
+  series: string;
+  pairId: string;
+  diagnosticPh: string;
+  diagnosticBand: string;
+  device: string;
+  condition: string;
+  referenceUri: string;
+  diagnosticUri: string;
+  referenceUrl: string | null;
+  diagnosticUrl: string | null;
+};
+
+function bandText(value: string): string {
+  if (value === 'low') return 'Ниже нормы';
+  if (value === 'normal') return 'Норма';
+  if (value === 'high') return 'Выше нормы';
+  return value;
+}
+
+function lightText(value: string | undefined): string {
+  if (value === 'daylight') return 'дневной свет';
+  if (value === 'warm_indoor') return 'тёплый комнатный';
+  if (value === 'cool_indoor') return 'холодный комнатный';
+  if (value === 'mixed_indoor') return 'смешанный';
+  return value ?? '';
+}
+
+function angleText(value: string | undefined): string {
+  if (value === 'straight') return 'ровно сверху';
+  if (value === 'slight_left') return 'наклон слева';
+  if (value === 'slight_right') return 'наклон справа';
+  if (value === 'slight_top') return 'наклон сверху';
+  return value ?? '';
+}
+
+function distanceText(value: string | undefined): string {
+  if (value === 'normal') return 'обычная дистанция';
+  if (value === 'slightly_near') return 'чуть ближе';
+  if (value === 'slightly_far') return 'чуть дальше';
+  return value ?? '';
+}
+
 export function AdminPage() {
   const [items, setItems] = useState<AdminCaseListItem[]>([]);
+  const [source, setSource] = useState('unknown');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const exportUrl = '/api/admin/export.csv';
 
   useEffect(() => {
     let cancelled = false;
@@ -40,14 +80,17 @@ export function AdminPage() {
         setLoading(true);
         setError(null);
 
-        const response = await fetch('/api/admin/cases?limit=50&offset=0');
+        const response = await fetch('/api/admin/cases?limit=100&offset=0');
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
           throw new Error(`Ошибка API (${response.status}): ${JSON.stringify(body)}`);
         }
 
         const data = (await response.json()) as AdminCasesResponse;
-        if (!cancelled) setItems(data.items ?? []);
+        if (!cancelled) {
+          setItems(data.items ?? []);
+          setSource(data.source ?? 'unknown');
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         if (!cancelled) setError(message);
@@ -63,119 +106,152 @@ export function AdminPage() {
     };
   }, []);
 
-  const rows = useMemo(() => {
+  const rows = useMemo<AdminRow[]>(() => {
     return items.map((item) => {
-      const tray = item.metadata?.tray ?? '';
-      const light = item.metadata?.light ?? '';
-      const location = item.metadata?.location ?? '';
-      const pH = item.metadata?.pH ?? '';
-      const cls = item.metadata?.class ?? '';
-
-      const qcBlur = item.qc?.blur ?? '';
-      const qcGlare = item.qc?.glare ?? '';
-      const qcDark = item.qc?.dark ?? '';
-
-      const ref = item.images.find((i) => i.kind === 'reference')?.uri ?? '';
-      const diag = item.images.find((i) => i.kind === 'diagnostic')?.uri ?? '';
+      const metadata = item.metadata ?? {};
+      const ref = item.images.find((i) => i.kind === 'reference');
+      const diag = item.images.find((i) => i.kind === 'diagnostic');
+      const condition = [
+        lightText(metadata.condition?.lightLabel),
+        angleText(metadata.condition?.angleLabel),
+        distanceText(metadata.condition?.distanceLabel),
+      ]
+        .filter(Boolean)
+        .join(' / ');
 
       return {
         ...item,
-        tray,
-        light,
-        location,
-        pH,
-        cls,
-        qcBlur,
-        qcGlare,
-        qcDark,
-        ref,
-        diag
+        series: metadata.series ?? '',
+        pairId: metadata.pairId ?? '',
+        diagnosticPh: String(metadata.diagnosticPh ?? metadata.pH ?? ''),
+        diagnosticBand: bandText(metadata.diagnosticBand ?? ''),
+        device: metadata.device ?? '',
+        condition,
+        referenceUri: ref?.uri ?? '',
+        diagnosticUri: diag?.uri ?? '',
+        referenceUrl: ref?.publicUrl ?? null,
+        diagnosticUrl: diag?.publicUrl ?? null,
       };
     });
   }, [items]);
 
-  return (
-    <section>
-      <h1>Админка</h1>
+  const counters = useMemo(() => {
+    const result = { low: 0, normal: 0, high: 0, unknown: 0 };
+    for (const row of rows) {
+      if (row.diagnosticBand === 'low') result.low += 1;
+      else if (row.diagnosticBand === 'normal') result.normal += 1;
+      else if (row.diagnosticBand === 'high') result.high += 1;
+      else result.unknown += 1;
+    }
+    return result;
+  }, [rows]);
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <a href={exportUrl} target="_blank" rel="noreferrer">
-          Экспорт CSV
-        </a>
-        {loading ? <span>Загрузка…</span> : <span>Кейсов: {rows.length}</span>}
+  return (
+    <section className="admin-shell">
+      <div className="capture-header">
+        <div>
+          <h1>Админка съёмки</h1>
+          <p className="muted">
+            Источник данных: <span className="mono">{source}</span>
+          </p>
+        </div>
+        <div className="admin-actions">
+          <a className="button-link" href="/api/admin/export.csv" target="_blank" rel="noreferrer">
+            CSV
+          </a>
+          <a
+            className="button-link"
+            href="/api/admin/export.jsonl"
+            target="_blank"
+            rel="noreferrer"
+          >
+            JSONL
+          </a>
+        </div>
       </div>
 
-      {error ? (
-        <pre style={{ whiteSpace: 'pre-wrap', padding: 12, background: '#fff3f3', border: '1px solid #ffd0d0' }}>
-          {error}
-        </pre>
-      ) : null}
+      <div className="counter-row">
+        <Counter label="Ниже нормы" value={counters.low} />
+        <Counter label="Норма" value={counters.normal} />
+        <Counter label="Выше нормы" value={counters.high} />
+        <Counter label="Неизвестно" value={counters.unknown} />
+      </div>
 
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', minWidth: 900 }}>
+      {loading ? (
+        <p className="muted">Загрузка...</p>
+      ) : (
+        <p className="muted">Кейсов: {rows.length}</p>
+      )}
+      {error ? <pre className="error-box">{error}</pre> : null}
+
+      <div className="table-wrap">
+        <table className="data-table">
           <thead>
             <tr>
               {[
-                'createdAt',
-                'id',
-                'score',
-                'confidence',
-                'tray',
-                'light',
-                'location',
+                'создано',
+                'серия',
+                'ID пары',
                 'pH',
-                'class',
-                'qc.blur',
-                'qc.glare',
-                'qc.dark',
-                'reference.uri',
-                'diagnostic.uri'
-              ].map((h) => (
-                <th key={h} style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 8 }}>
-                  {h}
-                </th>
+                'диапазон',
+                'устройство',
+                'условия',
+                'чистый снимок',
+                'снимок после реакции',
+              ].map((header) => (
+                <th key={header}>{header}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee', whiteSpace: 'nowrap' }}>
-                  {new Date(r.createdAt).toLocaleString('ru-RU')}
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>{new Date(row.createdAt).toLocaleString('ru-RU')}</td>
+                <td>{row.series}</td>
+                <td className="mono compact-cell" title={row.pairId}>
+                  {row.pairId}
                 </td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>{r.id}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{r.score ?? ''}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{r.confidence ?? ''}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{r.tray}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{r.light}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{r.location}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{r.pH}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{r.cls}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{String(r.qcBlur)}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{String(r.qcGlare)}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{String(r.qcDark)}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee', maxWidth: 220 }}>
-                  <span title={r.ref} style={{ display: 'inline-block', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {r.ref}
-                  </span>
+                <td>{row.diagnosticPh}</td>
+                <td>{row.diagnosticBand}</td>
+                <td>{row.device}</td>
+                <td>{row.condition}</td>
+                <td className="compact-cell">
+                  {row.referenceUrl ? (
+                    <a href={row.referenceUrl} target="_blank" rel="noreferrer">
+                      открыть
+                    </a>
+                  ) : (
+                    <span title={row.referenceUri}>{row.referenceUri}</span>
+                  )}
                 </td>
-                <td style={{ padding: 8, borderBottom: '1px solid #eee', maxWidth: 220 }}>
-                  <span title={r.diag} style={{ display: 'inline-block', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {r.diag}
-                  </span>
+                <td className="compact-cell">
+                  {row.diagnosticUrl ? (
+                    <a href={row.diagnosticUrl} target="_blank" rel="noreferrer">
+                      открыть
+                    </a>
+                  ) : (
+                    <span title={row.diagnosticUri}>{row.diagnosticUri}</span>
+                  )}
                 </td>
               </tr>
             ))}
             {!loading && rows.length === 0 ? (
               <tr>
-                <td colSpan={14} style={{ padding: 12 }}>
-                  Нет данных. Создай кейс через пользовательский флоу или `POST /api/cases`.
-                </td>
+                <td colSpan={9}>Данных пока нет</td>
               </tr>
             ) : null}
           </tbody>
         </table>
       </div>
     </section>
+  );
+}
+
+function Counter({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="counter">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }

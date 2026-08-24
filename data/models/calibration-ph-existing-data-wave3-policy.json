@@ -1,0 +1,208 @@
+{
+  "version": 3,
+  "kind": "ph-existing-data-wave3-policy-research-artifact",
+  "generatedAt": "2026-06-25T05:37:35.266Z",
+  "selectedPolicyId": "wave1-cost-sensitive",
+  "selectedBalancedPolicyId": "wave1-robust-baseline",
+  "selectedGates": {
+    "high": {
+      "id": "high-knn-weighted-k5-t0.25-fixed-center-hsv-lab",
+      "target": "high",
+      "roiStrategy": "fixed-center",
+      "featureSet": "hsv-lab",
+      "spec": {
+        "algorithm": "knn",
+        "k": 5,
+        "weighted": true,
+        "threshold": 0.25
+      },
+      "score": 0.655035,
+      "metrics": {
+        "n": 48,
+        "positive": 20,
+        "negative": 28,
+        "tp": 18,
+        "tn": 17,
+        "fp": 11,
+        "fn": 2,
+        "recallPositive": 0.9,
+        "recallNegative": 0.6071,
+        "precisionPositive": 0.6207,
+        "falsePositiveRate": 0.3929,
+        "falseNegativeRate": 0.1,
+        "balancedAccuracy": 0.7536,
+        "accuracy": 0.7292
+      }
+    },
+    "low": {
+      "id": "low-centroid-plain-k0-t0.5-auto-flat-lab-rgb",
+      "target": "low",
+      "roiStrategy": "auto-flat",
+      "featureSet": "lab-rgb",
+      "spec": {
+        "algorithm": "centroid",
+        "k": 0,
+        "weighted": false,
+        "threshold": 0.5
+      },
+      "score": 0.566915,
+      "metrics": {
+        "n": 48,
+        "positive": 20,
+        "negative": 28,
+        "tp": 16,
+        "tn": 17,
+        "fp": 11,
+        "fn": 4,
+        "recallPositive": 0.8,
+        "recallNegative": 0.6071,
+        "precisionPositive": 0.5926,
+        "falsePositiveRate": 0.3929,
+        "falseNegativeRate": 0.2,
+        "balancedAccuracy": 0.7036,
+        "accuracy": 0.6875
+      }
+    },
+    "normal": {
+      "id": "normal-knn-plain-k3-t0.34-fixed-wide-core",
+      "target": "normal",
+      "roiStrategy": "fixed-wide",
+      "featureSet": "core",
+      "spec": {
+        "algorithm": "knn",
+        "k": 3,
+        "weighted": false,
+        "threshold": 0.34
+      },
+      "score": 0.416465,
+      "metrics": {
+        "n": 48,
+        "positive": 8,
+        "negative": 40,
+        "tp": 2,
+        "tn": 39,
+        "fp": 1,
+        "fn": 6,
+        "recallPositive": 0.25,
+        "recallNegative": 0.975,
+        "precisionPositive": 0.6667,
+        "falsePositiveRate": 0.025,
+        "falseNegativeRate": 0.75,
+        "balancedAccuracy": 0.6125,
+        "accuracy": 0.8542
+      }
+    }
+  },
+  "decisionPolicy": {
+    "safetyPolicy": "wave1-cost-sensitive",
+    "balancedPolicy": "wave1-robust-baseline",
+    "outputLabels": [
+      "normal",
+      "risk",
+      "uncertain"
+    ],
+    "priority": [
+      "highGate/lowGate risk override",
+      "cost-sensitive safety line",
+      "normal consensus"
+    ]
+  },
+  "requiredInputs": {
+    "featureCacheVectorSpecByGate": {
+      "high": [
+        "deltaHueSin",
+        "deltaHueCos",
+        "deltaSat",
+        "deltaVal",
+        "deltaLabL",
+        "deltaLabA",
+        "deltaLabB"
+      ],
+      "low": [
+        "deltaRgbR",
+        "deltaRgbG",
+        "deltaRgbB",
+        "deltaLabL",
+        "deltaLabA",
+        "deltaLabB"
+      ],
+      "normal": [
+        "deltaHueSin",
+        "deltaHueCos",
+        "deltaSat",
+        "deltaVal",
+        "deltaLabA",
+        "deltaLabB",
+        "qc.meanLumaNorm"
+      ]
+    },
+    "roiStrategies": {
+      "high": "fixed-center",
+      "low": "auto-flat",
+      "normal": "fixed-wide"
+    }
+  },
+  "apiCompatibility": {
+    "dropInForExistingLoader": false,
+    "reason": "Existing loader expects one top-level vector model. Wave 3 requires several gate lines plus policy execution.",
+    "requiredAdapterWork": [
+      "load several line specs",
+      "extract matching ROI/features",
+      "run gates and baseline lines",
+      "apply decision policy",
+      "return normal/risk/uncertain with diagnostics"
+    ]
+  },
+  "metrics": {
+    "safety": {
+      "n": 48,
+      "n0": 8,
+      "n1": 40,
+      "coverage": 1,
+      "normalPredictions": 2,
+      "riskPredictions": 46,
+      "uncertainPredictions": 0,
+      "recall0": 0.25,
+      "recall1": 1,
+      "balancedAccuracy": 0.625,
+      "accuracyOnAll": 0.875,
+      "accuracyOnDecided": 0.875,
+      "falseNormalLow": {
+        "count": 0,
+        "total": 20,
+        "rate": 0
+      },
+      "falseNormalHigh": {
+        "count": 0,
+        "total": 20,
+        "rate": 0
+      },
+      "normalSentToRiskOrUncertain": 6
+    },
+    "balanced": {
+      "n": 48,
+      "n0": 8,
+      "n1": 40,
+      "coverage": 1,
+      "normalPredictions": 12,
+      "riskPredictions": 36,
+      "uncertainPredictions": 0,
+      "recall0": 0.625,
+      "recall1": 0.825,
+      "balancedAccuracy": 0.725,
+      "accuracyOnAll": 0.7917,
+      "accuracyOnDecided": 0.7917,
+      "falseNormalLow": {
+        "count": 5,
+        "total": 20,
+        "rate": 0.25
+      },
+      "falseNormalHigh": {
+        "count": 2,
+        "total": 20,
+        "rate": 0.1
+      },
+      "normalSentToRiskOrUncertain": 3
+    }
+  }
+}

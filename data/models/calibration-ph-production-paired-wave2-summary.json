@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "ph-production-paired-wave2-reinterpretation-summary",
+  "generatedAt": "2026-06-25T06:42:20.475Z",
+  "v1Role": {
+    "productionProxy": false,
+    "flatTrainExpansion": false,
+    "allowedUses": [
+      "roi_sanity_check",
+      "feature_sanity_check",
+      "possible_pretraining_context"
+    ]
+  },
+  "productionAnchor": "knn-reg-band-weighted-k5-5.95-6.30|fixed-wide|hsv-lab",
+  "apiDecision": {
+    "recommendedForApiNow": false,
+    "reason": "Wave 2 is reinterpretation/role assignment, not a deployable model."
+  }
+}

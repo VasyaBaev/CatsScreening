@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "kind": "ph-production-paired-wave3-policy-artifact",
+  "generatedAt": "2026-06-25T06:48:03.636Z",
+  "selectedSafetyPolicyId": "paired-gates-override",
+  "selectedBalancedPolicyId": "paired-balanced-baseline",
+  "selectedGates": {
+    "high": {
+      "id": "high-knn-weighted-k5-t0.25-fixed-center-hsv-lab",
+      "target": "high",
+      "roiStrategy": "fixed-center",
+      "featureSet": "hsv-lab",
+      "vectorSpec": [
+        "deltaHueSin",
+        "deltaHueCos",
+        "deltaSat",
+        "deltaVal",
+        "deltaLabL",
+        "deltaLabA",
+        "deltaLabB"
+      ],
+      "spec": {
+        "algorithm": "knn",
+        "k": 5,
+        "weighted": true,
+        "threshold": 0.25
+      },
+      "score": 0.692,
+      "metrics": {
+        "n": 48,
+        "positive": 20,
+        "negative": 28,
+        "tp": 18,
+        "tn": 17,
+        "fp": 11,
+        "fn": 2,
+        "recallPositive": 0.9,
+        "recallNegative": 0.6071,
+        "precisionPositive": 0.6207,
+        "falsePositiveRate": 0.3929,
+        "falseNegativeRate": 0.1,
+        "balancedAccuracy": 0.7536,
+        "accuracy": 0.7292
+      }
+    },
+    "low": {
+      "id": "low-centroid-plain-k0-t0.5-auto-flat-lab-rgb",
+      "target": "low",
+      "roiStrategy": "auto-flat",
+      "featureSet": "lab-rgb",
+      "vectorSpec": [
+        "deltaRgbR",
+        "deltaRgbG",
+        "deltaRgbB",
+        "deltaLabL",
+        "deltaLabA",
+        "deltaLabB"
+      ],
+      "spec": {
+        "algorithm": "centroid",
+        "k": 0,
+        "weighted": false,
+        "threshold": 0.5
+      },
+      "score": 0.61138,
+      "metrics": {
+        "n": 48,
+        "positive": 20,
+        "negative": 28,
+        "tp": 16,
+        "tn": 17,
+        "fp": 11,
+        "fn": 4,
+        "recallPositive": 0.8,
+        "recallNegative": 0.6071,
+        "precisionPositive": 0.5926,
+        "falsePositiveRate": 0.3929,
+        "falseNegativeRate": 0.2,
+        "balancedAccuracy": 0.7036,
+        "accuracy": 0.6875
+      }
+    },
+    "normal": {
+      "id": "normal-knn-plain-k3-t0.34-fixed-wide-core",
+      "target": "normal",
+      "roiStrategy": "fixed-wide",
+      "featureSet": "core",
+      "vectorSpec": [
+        "deltaHueSin",
+        "deltaHueCos",
+        "deltaSat",
+        "deltaVal",
+        "deltaLabA",
+        "deltaLabB",
+        "qc.meanLumaNorm"
+      ],
+      "spec": {
+        "algorithm": "knn",
+        "k": 3,
+        "weighted": false,
+        "threshold": 0.34
+      },
+      "score": 0.394175,
+      "metrics": {
+        "n": 48,
+        "positive": 8,
+        "negative": 40,
+        "tp": 2,
+        "tn": 39,
+        "fp": 1,
+        "fn": 6,
+        "recallPositive": 0.25,
+        "recallNegative": 0.975,
+        "precisionPositive": 0.6667,
+        "falsePositiveRate": 0.025,
+        "falseNegativeRate": 0.75,
+        "balancedAccuracy": 0.6125,
+        "accuracy": 0.8542
+      }
+    }
+  },
+  "metrics": {
+    "safety": {
+      "n": 48,
+      "n0": 8,
+      "n1": 40,
+      "coverage": 1,
+      "normalPredictions": 1,
+      "riskPredictions": 47,
+      "uncertainPredictions": 0,
+      "retakeUncertain": 0,
+      "retakeRate": 0,
+      "recall0": 0.125,
+      "recall1": 1,
+      "balancedAccuracy": 0.5625,
+      "accuracyOnAll": 0.8542,
+      "accuracyOnDecided": 0.8542,
+      "falseNormalLow": {
+        "count": 0,
+        "total": 20,
+        "rate": 0
+      },
+      "falseNormalHigh": {
+        "count": 0,
+        "total": 20,
+        "rate": 0
+      }
+    },
+    "balanced": {
+      "n": 48,
+      "n0": 8,
+      "n1": 40,
+      "coverage": 1,
+      "normalPredictions": 9,
+      "riskPredictions": 39,
+      "uncertainPredictions": 0,
+      "retakeUncertain": 0,
+      "retakeRate": 0,
+      "recall0": 0.5,
+      "recall1": 0.875,
+      "balancedAccuracy": 0.6875,
+      "accuracyOnAll": 0.8125,
+      "accuracyOnDecided": 0.8125,
+      "falseNormalLow": {
+        "count": 3,
+        "total": 20,
+        "rate": 0.15
+      },
+      "falseNormalHigh": {
+        "count": 2,
+        "total": 20,
+        "rate": 0.1
+      }
+    }
+  },
+  "apiCompatibility": {
+    "dropInForExistingLoader": false,
+    "reason": "Requires multi-line policy adapter and pair-quality handling."
+  }
+}
