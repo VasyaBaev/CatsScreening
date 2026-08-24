@@ -26,8 +26,21 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 Set-Location $root
 
-npm run playground:build
+$playgroundManifest = Join-Path $root "data\lab\ph-v5-v8\manifest.json"
+$playgroundFeatureCache = Join-Path $root "data\eval\ph-existing-feature-cache.jsonl"
+$committedPlaygroundPack = Join-Path $root "apps\web\public\playground\v5-v8\playground.json"
+
+if ((Test-Path -LiteralPath $playgroundManifest) -and (Test-Path -LiteralPath $playgroundFeatureCache)) {
+  npm run playground:build
+  if ($LASTEXITCODE -ne 0) { throw "Playground pack build failed with exit code $LASTEXITCODE" }
+} elseif (Test-Path -LiteralPath $committedPlaygroundPack) {
+  Write-Output "Playground sources are absent; using the committed verified pack"
+} else {
+  throw "Neither Playground build inputs nor the committed pack are available"
+}
+
 npm run build
+if ($LASTEXITCODE -ne 0) { throw "Production build failed with exit code $LASTEXITCODE" }
 
 if (Test-Path $stage) {
   Remove-Item -LiteralPath $stage -Recurse -Force
