@@ -26,6 +26,7 @@ import {
   finalizeLocalCaptureAttempt,
   getLocalCaptureContext,
   getLocalCaptureAttempt,
+  getLocalCaptureAttemptByClientRequestId,
   replaceLocalCaptureAttempt,
   saveLocalAttemptSlotRoi,
   startLocalCaptureReaction,
@@ -49,6 +50,7 @@ function storeError(reply: FastifyReply, error: unknown) {
     message === 'CAPTURE_POLICY_MISMATCH' ||
     message === 'CAPTURE_QUOTA_FULL' ||
     message === 'SHARED_SPECIMEN_ROLE_COMPLETE' ||
+    message === 'REFERENCE_LOCKED_AFTER_REACTION' ||
     message === 'REACTION_NOT_STARTED' ||
     message === 'REFERENCE_ROI_REQUIRED' ||
     message === 'POLYGON_ROI_REQUIRED' ||
@@ -100,8 +102,23 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'INVALID_ATTEMPT_REQUEST', details: parsed.error.flatten() };
     }
 
+    const clientRequestId = request.headers['x-capture-request-id'];
+    if (
+      typeof clientRequestId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        clientRequestId,
+      )
+    ) {
+      reply.code(400);
+      return { error: 'INVALID_CAPTURE_REQUEST_ID' };
+    }
+
     try {
-      const attempt = await createPolicyCaptureAttempt(activeCapturePolicy, parsed.data);
+      const attempt = await createPolicyCaptureAttempt(
+        activeCapturePolicy,
+        parsed.data,
+        clientRequestId,
+      );
       reply.code(201);
       return { attempt };
     } catch (error) {
@@ -110,6 +127,28 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
         return { ...response, message: activeCapturePolicy.instruction };
       }
       return response;
+    }
+  });
+
+  app.get('/attempts/by-client-request/:clientRequestId', async (request, reply) => {
+    const params = request.params as { clientRequestId: string };
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        params.clientRequestId,
+      )
+    ) {
+      reply.code(400);
+      return { error: 'INVALID_CAPTURE_REQUEST_ID' };
+    }
+    try {
+      return {
+        attempt: await getLocalCaptureAttemptByClientRequestId(
+          activeCapturePolicy,
+          params.clientRequestId,
+        ),
+      };
+    } catch (error) {
+      return storeError(reply, error);
     }
   });
 

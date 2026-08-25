@@ -209,6 +209,16 @@ test('Admin pagination не ограничивает counters, exports сохр�
     assert.equal(csv.body.trim().split(/\r?\n/).length, 4);
     assert.match(csv.body.split(/\r?\n/, 1)[0], /policyVersion/);
     assert.match(csv.body, /cameraMetadata/);
+
+    const v9Roi = await app.inject({
+      method: 'GET',
+      url: '/api/roi-labels/v9/cases',
+      headers: {
+        authorization: `Basic ${Buffer.from('admin:Ivasi!1').toString('base64')}`,
+      },
+    });
+    assert.equal(v9Roi.statusCode, 200);
+    assert.deepEqual(v9Roi.json().pairs, []);
   } finally {
     await app.close();
   }

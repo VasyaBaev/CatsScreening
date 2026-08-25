@@ -206,6 +206,40 @@ test('diagnostic savedAt и elapsed вычисляются по server-side uplo
   assert.ok((updated.reactionElapsedSec ?? 0) >= 4.5);
 });
 
+test('reference upload и ROI блокируются после старта реакции', async () => {
+  const currentPolicy = policy('reference-lock');
+  const attempt = await store.createPolicyCaptureAttempt(currentPolicy, selection());
+  await saveReference(attempt);
+  await store.startLocalCaptureReaction(attempt.id);
+
+  await assert.rejects(
+    store.saveLocalAttemptUpload(attempt.id, upload('reference', '2026-08-25T10:00:30.000Z')),
+    /REFERENCE_LOCKED_AFTER_REACTION/,
+  );
+  await assert.rejects(
+    store.saveLocalAttemptSlotRoi(attempt.id, 'reference', {
+      ...polygonRoi,
+      points: polygonRoi.shape === 'polygon' ? polygonRoi.points.slice().reverse() : [],
+    }),
+    /REFERENCE_LOCKED_AFTER_REACTION/,
+  );
+
+  const { buildServer } = await import('../server.js');
+  const app = await buildServer({ logger: false });
+  try {
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/uploads/attempts/${attempt.id}/slots/reference`,
+      headers: { 'content-type': 'image/jpeg', 'x-file-name': 'late-reference.jpg' },
+      payload: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    });
+    assert.equal(response.statusCode, 409);
+    assert.deepEqual(response.json(), { error: 'REFERENCE_LOCKED_AFTER_REACTION' });
+  } finally {
+    await app.close();
+  }
+});
+
 test('active restart сохраняет history, освобождает reservation и связывает same specimen', async () => {
   const currentPolicy = policy('restart', { target: 1 });
   const attempt = await store.createPolicyCaptureAttempt(currentPolicy, selection());

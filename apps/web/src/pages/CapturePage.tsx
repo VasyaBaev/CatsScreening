@@ -18,6 +18,7 @@ import { RoiEditor } from '../components/RoiEditor';
 import {
   createCaptureAttempt,
   fetchCaptureAttempt,
+  fetchCaptureAttemptByClientRequestId,
   fetchCaptureContext,
   finalizeCaptureAttempt,
   replaceCaptureAttempt,
@@ -30,6 +31,7 @@ import { FIXED_WIDE_ROI, polygonFromRect, polygonToRoiShape, rectToRoiShape } fr
 const OPERATOR_KEY = 'cats.capture.operatorId';
 const DEVICE_ROLE_KEY = 'cats.capture.deviceRole';
 const ATTEMPT_KEY = 'cats.capture.attemptId';
+const CREATE_REQUEST_KEY = 'cats.capture.createRequestId';
 const NEW_SHARED_SPECIMEN = '__new_shared_specimen__';
 
 type CaptureForm = {
@@ -174,6 +176,17 @@ function attemptStatusText(attempt: CaptureAttempt): string {
   return 'Реакция начата — снимите diagnostic';
 }
 
+async function followReplacementChain(initial: CaptureAttempt): Promise<CaptureAttempt> {
+  let current = initial;
+  const visited = new Set([current.id]);
+  while (current.replacedByAttemptId) {
+    if (visited.has(current.replacedByAttemptId)) throw new Error('REPLACEMENT_CHAIN_CYCLE');
+    visited.add(current.replacedByAttemptId);
+    current = await fetchCaptureAttempt(current.replacedByAttemptId);
+  }
+  return current;
+}
+
 function contextQuery(form: CaptureForm) {
   return {
     deviceRole: form.deviceRole || undefined,
@@ -283,16 +296,18 @@ export function CapturePage() {
   useEffect(() => {
     let cancelled = false;
     const id = readLocal(ATTEMPT_KEY);
-    if (!id) {
+    const clientRequestId = readLocal(CREATE_REQUEST_KEY);
+    if (!id && !clientRequestId) {
       setRestoring(false);
       return;
     }
 
-    fetchCaptureAttempt(id)
+    const restore = id
+      ? fetchCaptureAttempt(id)
+      : fetchCaptureAttemptByClientRequestId(clientRequestId);
+    restore
       .then(async (restored) => {
-        const current = restored.replacedByAttemptId
-          ? await fetchCaptureAttempt(restored.replacedByAttemptId)
-          : restored;
+        const current = await followReplacementChain(restored);
         if (!current.policySnapshot) {
           writeLocal(ATTEMPT_KEY, '');
           throw new Error('Старая попытка не относится к Capture V10 и не восстанавливается.');
@@ -301,7 +316,6 @@ export function CapturePage() {
       })
       .catch((reason) => {
         if (cancelled) return;
-        writeLocal(ATTEMPT_KEY, '');
         setError(
           'Не удалось восстановить попытку: ' +
             (reason instanceof Error ? reason.message : String(reason)),
@@ -365,6 +379,7 @@ export function CapturePage() {
     setReplacementMode(false);
     setSpecimenChoice('same');
     writeLocal(ATTEMPT_KEY, next.id);
+    writeLocal(CREATE_REQUEST_KEY, '');
     setClock(Date.now());
   }
 
@@ -393,10 +408,7 @@ export function CapturePage() {
     attemptId: string,
     retryDraft?: { slotKey: string; draft: SlotDraft },
   ) {
-    let restored = await fetchCaptureAttempt(attemptId);
-    if (restored.replacedByAttemptId) {
-      restored = await fetchCaptureAttempt(restored.replacedByAttemptId);
-    }
+    const restored = await followReplacementChain(await fetchCaptureAttempt(attemptId));
     const draftOverrides: Record<string, SlotDraft> = {};
     if (retryDraft && restored.id === attemptId) {
       const serverUpload = restored.uploads[retryDraft.slotKey];
@@ -440,6 +452,7 @@ export function CapturePage() {
       successMessage: string;
       cancellable?: boolean;
       reconcileAttemptId?: string;
+      reconcileClientRequestId?: string;
       retryDraft?: { slotKey: string; draft: SlotDraft };
     },
     action: (controls: OperationControls) => Promise<void>,
@@ -476,15 +489,34 @@ export function CapturePage() {
       const cancelled = controller.signal.aborted;
       updateOperation({ stage: 'Сверяем фактическое состояние с сервером…', progress: null });
       let reconciliation = 'Состояние сервера не удалось перечитать.';
+      let reconciled = false;
       try {
         if (config.reconcileAttemptId) {
           await reconcileAttempt(config.reconcileAttemptId, config.retryDraft);
+        } else if (config.reconcileClientRequestId) {
+          applyAttempt(
+            await followReplacementChain(
+              await fetchCaptureAttemptByClientRequestId(config.reconcileClientRequestId),
+            ),
+          );
         } else await refreshContext();
+        reconciled = true;
         reconciliation = 'Фактическое состояние сервера восстановлено.';
       } catch (reconcileReason) {
         reconciliation +=
           ' ' +
           (reconcileReason instanceof Error ? reconcileReason.message : String(reconcileReason));
+      }
+      if (!reconciled && config.retryDraft) {
+        const retryDraft = config.retryDraft.draft;
+        updateDraft(config.retryDraft.slotKey, {
+          status: retryDraft.file ? 'error' : 'saved',
+          progress: null,
+          roiDirty: retryDraft.file ? retryDraft.roiDirty : true,
+          error: retryDraft.file
+            ? 'Связь с сервером потеряна. Исходный файл сохранён в этой вкладке — можно повторить.'
+            : 'Связь с сервером потеряна. ROI не подтверждена — можно повторить сохранение.',
+        });
       }
       const detail = reason instanceof Error ? reason.message : String(reason);
       updateOperation({
@@ -546,6 +578,9 @@ export function CapturePage() {
   async function startAttempt() {
     const input = buildSelection();
     if (!input) return;
+    writeLocal(ATTEMPT_KEY, '');
+    const clientRequestId = readLocal(CREATE_REQUEST_KEY) || window.crypto.randomUUID();
+    writeLocal(CREATE_REQUEST_KEY, clientRequestId);
     await runOperation(
       {
         kind: 'create',
@@ -553,9 +588,10 @@ export function CapturePage() {
         stage: 'Сервер резервирует quota и создаёт ID…',
         successMessage: 'Пара создана. Можно снимать reference.',
         cancellable: false,
+        reconcileClientRequestId: clientRequestId,
       },
       async ({ signal }) => {
-        const created = await createCaptureAttempt(input, signal);
+        const created = await createCaptureAttempt(input, clientRequestId, signal);
         applyAttempt(created);
         await refreshContext(signal);
       },
@@ -764,6 +800,7 @@ export function CapturePage() {
   function newPair() {
     clearLocalPreviews();
     writeLocal(ATTEMPT_KEY, '');
+    writeLocal(CREATE_REQUEST_KEY, '');
     setAttempt(null);
     setDrafts({});
     setForm((current) => ({
@@ -795,7 +832,8 @@ export function CapturePage() {
           <p className="capture-kicker">Capture V10 · Mobile First</p>
           <h1>Съёмка пары</h1>
           <p className="muted">
-            Сервер задаёт pH, quota и идентификаторы. Оригиналы сохраняются без перекодирования.
+            Сервер задаёт допустимые pH, quota и идентификаторы. Оператор выбирает доступный pH.
+            Оригиналы сохраняются без перекодирования.
           </p>
         </div>
         {attempt?.reactionStartedAt ? (
@@ -1064,6 +1102,8 @@ export function CapturePage() {
           <div className="capture-slot-list">
             {attempt.task.slots.map((slot) => {
               const diagnosticLocked = slot.kind === 'diagnostic' && !attempt.reactionStartedAt;
+              const referenceLocked =
+                slot.kind === 'reference' && Boolean(attempt.reactionStartedAt);
               return (
                 <CaptureSlot
                   key={slot.key}
@@ -1072,11 +1112,13 @@ export function CapturePage() {
                   elapsed={elapsed}
                   reactionStarted={Boolean(attempt.reactionStartedAt)}
                   requirePolygon={policy?.requirePolygonRoi ?? false}
-                  disabled={terminal || replacementMode || diagnosticLocked}
+                  disabled={terminal || replacementMode || diagnosticLocked || referenceLocked}
                   lockedReason={
                     diagnosticLocked
                       ? 'Сначала сохраните reference и нажмите «Начать реакцию».'
-                      : null
+                      : referenceLocked
+                        ? 'Reference зафиксирован при старте реакции и больше не изменяется.'
+                        : null
                   }
                   onFile={(file) => chooseFile(slot.key, file)}
                   onRoi={(roi) => changeRoi(slot.key, roi)}

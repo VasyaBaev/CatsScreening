@@ -65,6 +65,10 @@ export const registerUploadRoutes: FastifyPluginAsync = async (app) => {
         reply.code(404);
         return { error: 'SLOT_NOT_FOUND' };
       }
+      if (slot.kind === 'reference' && attempt.reactionStartedAt) {
+        reply.code(409);
+        return { error: 'REFERENCE_LOCKED_AFTER_REACTION' };
+      }
       if (slot.kind === 'diagnostic' && !attempt.reactionStartedAt) {
         reply.code(409);
         return { error: 'REACTION_NOT_STARTED' };
@@ -96,7 +100,11 @@ export const registerUploadRoutes: FastifyPluginAsync = async (app) => {
         reply.code(404);
         return { error: message };
       }
-      if (message === 'ATTEMPT_NOT_ACTIVE' || message === 'REACTION_NOT_STARTED') {
+      if (
+        message === 'ATTEMPT_NOT_ACTIVE' ||
+        message === 'REFERENCE_LOCKED_AFTER_REACTION' ||
+        message === 'REACTION_NOT_STARTED'
+      ) {
         reply.code(409);
         return { error: message };
       }

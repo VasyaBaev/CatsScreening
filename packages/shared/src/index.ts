@@ -664,6 +664,7 @@ export const CaptureAttemptSchema = z.object({
   deviceRole: z.string().optional(),
   specimenMode: CaptureSpecimenModeSchema.optional(),
   referencePh: z.number().min(0).max(14).optional(),
+  clientRequestId: z.string().uuid().optional(),
   replacesAttemptId: z.string().uuid().optional(),
   replacedByAttemptId: z.string().uuid().optional(),
 });

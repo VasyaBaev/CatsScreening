@@ -115,7 +115,7 @@ export const registerRoiLabelRoutes: FastifyPluginAsync = async (app) => {
       };
     }
 
-    const cases = await listFreshCaptureCases();
+    const cases = (await listFreshCaptureCases()).filter((item) => !item.policySnapshot);
     const pairs = cases.flatMap((item) => {
       const pair = toV9RoiPair(item);
       return pair ? [pair] : [];

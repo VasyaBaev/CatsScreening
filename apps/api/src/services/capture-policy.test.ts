@@ -131,6 +131,7 @@ test('runtime context остаётся draft/closed и API возвращает 
     const createResponse = await app.inject({
       method: 'POST',
       url: '/api/cases/attempts',
+      headers: { 'x-capture-request-id': randomUUID() },
       payload: request(),
     });
     assert.equal(createResponse.statusCode, 409);
@@ -141,6 +142,23 @@ test('runtime context остаётся draft/closed и API возвращает 
   } finally {
     await app.close();
   }
+});
+
+test('client request ID идемпотентно восстанавливает созданную пару', async () => {
+  const policy = activePolicy('client-request');
+  const clientRequestId = randomUUID();
+  const [left, right] = await Promise.all([
+    store.createPolicyCaptureAttempt(policy, request(), clientRequestId),
+    store.createPolicyCaptureAttempt(policy, request(), clientRequestId),
+  ]);
+
+  assert.equal(left.id, right.id);
+  assert.equal(left.clientRequestId, clientRequestId);
+  assert.equal(
+    (await store.getLocalCaptureAttemptByClientRequestId(policy, clientRequestId)).id,
+    left.id,
+  );
+  assert.equal((await store.getLocalCaptureContext(policy)).quotaSummary.reserved, 1);
 });
 
 test('active policy принимает только объявленные pH, role и specimen mode', async () => {

@@ -101,16 +101,34 @@ export async function fetchCaptureContext(
 
 export async function createCaptureAttempt(
   input: CreatePolicyCaptureAttemptRequest,
+  clientRequestId: string,
   signal?: AbortSignal,
 ): Promise<CaptureAttempt> {
   const parsed = CreatePolicyCaptureAttemptRequestSchema.parse(input);
   const response = await fetch('/api/cases/attempts', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-capture-request-id': clientRequestId,
+    },
     body: JSON.stringify(parsed),
     signal,
   });
   if (!response.ok) throw await responseError(response, 'Ошибка создания попытки');
+
+  const body = (await response.json()) as AttemptResponse;
+  return body.attempt;
+}
+
+export async function fetchCaptureAttemptByClientRequestId(
+  clientRequestId: string,
+  signal?: AbortSignal,
+): Promise<CaptureAttempt> {
+  const response = await fetch(
+    `/api/cases/attempts/by-client-request/${encodeURIComponent(clientRequestId)}`,
+    { signal },
+  );
+  if (!response.ok) throw await responseError(response, 'Ошибка восстановления создания пары');
 
   const body = (await response.json()) as AttemptResponse;
   return body.attempt;

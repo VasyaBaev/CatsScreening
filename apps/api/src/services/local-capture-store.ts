@@ -407,10 +407,17 @@ function assertPolicySelection(
 async function createPolicyCaptureAttemptUnlocked(
   policy: CapturePolicy,
   input: CreatePolicyCaptureAttemptRequest,
-  options: { specimenId?: string; replacesAttemptId?: string } = {},
+  options: { specimenId?: string; replacesAttemptId?: string; clientRequestId?: string } = {},
 ): Promise<CaptureAttempt> {
   assertPolicySelection(policy, input);
   const attempts = await listLocalCaptureAttempts();
+  if (options.clientRequestId) {
+    const existing = attempts.find(
+      (attempt) =>
+        belongsToPolicy(attempt, policy) && attempt.clientRequestId === options.clientRequestId,
+    );
+    if (existing) return existing;
+  }
   const selectedSharedSpecimenId = options.specimenId ?? input.sharedSpecimenId;
   const specimenId = selectedSharedSpecimenId ?? randomUUID();
   let displayLabel = `Образец #${specimenId.slice(0, 8)}`;
@@ -510,6 +517,7 @@ async function createPolicyCaptureAttemptUnlocked(
     deviceRole: input.deviceRole,
     specimenMode: input.specimenMode,
     referencePh: input.referencePh,
+    clientRequestId: options.clientRequestId,
     replacesAttemptId: options.replacesAttemptId,
   });
 
@@ -520,8 +528,22 @@ async function createPolicyCaptureAttemptUnlocked(
 export function createPolicyCaptureAttempt(
   policy: CapturePolicy,
   input: CreatePolicyCaptureAttemptRequest,
+  clientRequestId?: string,
 ): Promise<CaptureAttempt> {
-  return withCaptureTransition(() => createPolicyCaptureAttemptUnlocked(policy, input));
+  return withCaptureTransition(() =>
+    createPolicyCaptureAttemptUnlocked(policy, input, { clientRequestId }),
+  );
+}
+
+export async function getLocalCaptureAttemptByClientRequestId(
+  policy: CapturePolicy,
+  clientRequestId: string,
+): Promise<CaptureAttempt> {
+  const attempt = (await listLocalCaptureAttempts()).find(
+    (item) => belongsToPolicy(item, policy) && item.clientRequestId === clientRequestId,
+  );
+  if (!attempt) throw new Error('ATTEMPT_NOT_FOUND');
+  return attempt;
 }
 
 async function saveLocalAttemptUploadUnlocked(
@@ -533,6 +555,9 @@ async function saveLocalAttemptUploadUnlocked(
 
   const slot = attempt.task.slots.find((item) => item.key === upload.slotKey);
   if (!slot || slot.kind !== upload.kind) throw new Error('SLOT_NOT_FOUND');
+  if (slot.kind === 'reference' && attempt.reactionStartedAt) {
+    throw new Error('REFERENCE_LOCKED_AFTER_REACTION');
+  }
   if (slot.kind === 'diagnostic' && !attempt.reactionStartedAt) {
     throw new Error('REACTION_NOT_STARTED');
   }
@@ -574,6 +599,9 @@ async function saveLocalAttemptSlotRoiUnlocked(
 
   const upload = attempt.uploads[slotKey];
   if (!upload) throw new Error('SLOT_UPLOAD_NOT_FOUND');
+  if (upload.kind === 'reference' && attempt.reactionStartedAt) {
+    throw new Error('REFERENCE_LOCKED_AFTER_REACTION');
+  }
 
   const updated: CaptureAttempt = {
     ...attempt,
