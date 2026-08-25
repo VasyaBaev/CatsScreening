@@ -20,6 +20,8 @@ import type {
   UploadImageResponse,
 } from '@cats-screening/shared';
 
+import { extractCaptureCameraMetadata } from './image-metadata.js';
+
 const defaultStorageRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../storage',
@@ -124,6 +126,7 @@ export async function saveLocalAttemptImage(input: {
     publicUrl: localPublicUrlFromUri(uri),
     savedAt: new Date().toISOString(),
     roi: null,
+    cameraMetadata: extractCaptureCameraMetadata(input.buffer),
   };
 }
 

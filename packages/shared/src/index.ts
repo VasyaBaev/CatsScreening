@@ -533,6 +533,92 @@ export const CaptureTaskSchema = z.object({
 });
 export type CaptureTask = z.infer<typeof CaptureTaskSchema>;
 
+export const CaptureCameraMetadataStatusSchema = z.enum([
+  'parsed',
+  'no_metadata',
+  'unsupported_format',
+  'parse_error',
+]);
+export type CaptureCameraMetadataStatus = z.infer<typeof CaptureCameraMetadataStatusSchema>;
+
+export const CaptureCameraMetadataContainerSchema = z.enum([
+  'jpeg',
+  'png',
+  'webp',
+  'heic',
+  'heif',
+  'avif',
+  'tiff',
+  'gif',
+  'jxl',
+  'unknown',
+]);
+export type CaptureCameraMetadataContainer = z.infer<typeof CaptureCameraMetadataContainerSchema>;
+
+export const CaptureCameraMetadataValuesSchema = z.object({
+  make: z.string().max(160).nullable(),
+  model: z.string().max(160).nullable(),
+  software: z.string().max(160).nullable(),
+  dateTime: z.string().max(64).nullable(),
+  dateTimeOriginal: z.string().max(64).nullable(),
+  dateTimeDigitized: z.string().max(64).nullable(),
+  offsetTime: z.string().max(32).nullable(),
+  offsetTimeOriginal: z.string().max(32).nullable(),
+  offsetTimeDigitized: z.string().max(32).nullable(),
+  exposureTimeSec: z.number().finite().nonnegative().nullable(),
+  fNumber: z.number().finite().nonnegative().nullable(),
+  iso: z.number().finite().nonnegative().nullable(),
+  exposureBiasEv: z.number().finite().nullable(),
+  exposureProgram: z.string().max(120).nullable(),
+  exposureMode: z.string().max(120).nullable(),
+  meteringMode: z.string().max(120).nullable(),
+  whiteBalance: z.enum(['Auto', 'Manual']).nullable(),
+  lightSource: z.string().max(120).nullable(),
+  colorTemperatureKelvin: z.number().int().min(1000).max(50000).nullable(),
+  flash: z.string().max(160).nullable(),
+  focalLengthMm: z.number().finite().nonnegative().nullable(),
+  focalLength35mm: z.number().finite().nonnegative().nullable(),
+  lensMake: z.string().max(160).nullable(),
+  lensModel: z.string().max(160).nullable(),
+  subjectDistanceM: z.number().finite().nonnegative().nullable(),
+  orientation: z.number().int().min(1).max(8).nullable(),
+  pixelWidth: z.number().int().positive().max(1000000).nullable(),
+  pixelHeight: z.number().int().positive().max(1000000).nullable(),
+  exifColorSpace: z.string().max(120).nullable(),
+  iccPresent: z.boolean().nullable(),
+  iccDescription: z.string().max(200).nullable(),
+});
+export type CaptureCameraMetadataValues = z.infer<typeof CaptureCameraMetadataValuesSchema>;
+export const CaptureCameraMetadataFieldSchema = CaptureCameraMetadataValuesSchema.keyof();
+export type CaptureCameraMetadataField = z.infer<typeof CaptureCameraMetadataFieldSchema>;
+
+export const CaptureCameraMetadataSourceSchema = z.object({
+  group: z.enum(['exif', 'xmp', 'file', 'icc']),
+  rawTag: z.string().min(1).max(80),
+  unit: z.string().min(1).max(24).nullable(),
+});
+export type CaptureCameraMetadataSource = z.infer<typeof CaptureCameraMetadataSourceSchema>;
+
+export const CaptureCameraMetadataSchema = z.object({
+  schemaVersion: z.literal(1),
+  capturePath: z.literal('web_file_input'),
+  parser: z.object({
+    name: z.literal('exifreader'),
+    version: z.literal('4.44.0'),
+    status: CaptureCameraMetadataStatusSchema,
+    diagnosticCode: z
+      .enum(['NO_CAMERA_METADATA', 'UNSUPPORTED_CONTAINER', 'METADATA_PARSE_FAILED'])
+      .nullable(),
+  }),
+  detectedContainer: CaptureCameraMetadataContainerSchema,
+  values: CaptureCameraMetadataValuesSchema,
+  sources: z.record(CaptureCameraMetadataFieldSchema, CaptureCameraMetadataSourceSchema),
+  privacy: z.object({
+    gpsStatus: z.enum(['present_then_discarded', 'absent_or_stripped']),
+  }),
+});
+export type CaptureCameraMetadata = z.infer<typeof CaptureCameraMetadataSchema>;
+
 export const CaptureAttemptUploadSchema = z.object({
   slotKey: z.string().min(1),
   kind: CaptureSlotKindSchema,
@@ -544,6 +630,7 @@ export const CaptureAttemptUploadSchema = z.object({
   publicUrl: z.string().nullable(),
   savedAt: z.string().min(1),
   roi: RoiShapeSchema.nullable().default(null),
+  cameraMetadata: CaptureCameraMetadataSchema.optional(),
 });
 export type CaptureAttemptUpload = z.infer<typeof CaptureAttemptUploadSchema>;
 
