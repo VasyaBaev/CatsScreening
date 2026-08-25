@@ -558,12 +558,14 @@ export type CaptureFinalizeResult = z.infer<typeof CaptureFinalizeResultSchema>;
 export const CaptureAttemptSchema = z.object({
   id: z.string().uuid(),
   task: CaptureTaskSchema,
-  status: z.enum(['active', 'finalized']),
+  status: z.enum(['active', 'finalized', 'abandoned', 'superseded']),
   operatorId: z.string().min(1).max(120),
   device: z.string().min(1).max(160),
   series: z.string().min(1).max(120),
   condition: ProductionLikeConditionSchema,
-  reactionStartedAt: z.string().min(1),
+  reactionStartedAt: z.string().min(1).nullable(),
+  diagnosticSavedAt: z.string().min(1).nullable().default(null),
+  reactionElapsedSec: z.number().nonnegative().nullable().default(null),
   finalMixturePh: z.number().min(0).max(14).nullable(),
   uploads: z.record(CaptureAttemptUploadSchema),
   createdAt: z.string().min(1),
@@ -575,6 +577,8 @@ export const CaptureAttemptSchema = z.object({
   deviceRole: z.string().optional(),
   specimenMode: CaptureSpecimenModeSchema.optional(),
   referencePh: z.number().min(0).max(14).optional(),
+  replacesAttemptId: z.string().uuid().optional(),
+  replacedByAttemptId: z.string().uuid().optional(),
 });
 export type CaptureAttempt = z.infer<typeof CaptureAttemptSchema>;
 
@@ -592,6 +596,18 @@ export const CreatePolicyCaptureAttemptRequestSchema = z.object({
 export type CreatePolicyCaptureAttemptRequest = z.infer<
   typeof CreatePolicyCaptureAttemptRequestSchema
 >;
+
+export const CaptureReplacementSpecimenChoiceSchema = z.enum(['same', 'new']);
+export type CaptureReplacementSpecimenChoice = z.infer<
+  typeof CaptureReplacementSpecimenChoiceSchema
+>;
+
+export const CreateCaptureReplacementRequestSchema = CreatePolicyCaptureAttemptRequestSchema.extend(
+  {
+    specimenChoice: CaptureReplacementSpecimenChoiceSchema,
+  },
+);
+export type CreateCaptureReplacementRequest = z.infer<typeof CreateCaptureReplacementRequestSchema>;
 
 export const CreateCaptureAttemptRequestSchema = z.object({
   taskCode: z.string().min(2).max(24),

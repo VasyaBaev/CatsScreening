@@ -25,6 +25,7 @@ import {
   type CaptureSharedSpecimen,
   type CaptureTask,
   type CreateCaptureAttemptRequest,
+  type CreateCaptureReplacementRequest,
   type CreateCaseRequest,
   type CreatePolicyCaptureAttemptRequest,
   type FinalizeCaptureAttemptRequest,
@@ -52,6 +53,17 @@ const manifestPath = path.join(storageRoot, 'cases.jsonl');
 const captureRoot = path.join(storageRoot, 'capture-hotfix');
 const attemptRoot = path.join(captureRoot, 'attempts');
 const captureManifestPath = path.join(captureRoot, 'cases.jsonl');
+
+let transitionQueue = Promise.resolve();
+
+function withCaptureTransition<T>(operation: () => Promise<T>): Promise<T> {
+  const result = transitionQueue.then(operation, operation);
+  transitionQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 async function readManifestLines(): Promise<string[]> {
   try {
@@ -116,7 +128,7 @@ export type FreshCaptureCase = {
   device: string;
   series: string;
   condition: CaptureAttempt['condition'];
-  reactionStartedAt: string;
+  reactionStartedAt: string | null;
   images: CaptureAttemptUpload[];
 };
 
@@ -125,11 +137,15 @@ function attemptPath(attemptId: string): string {
   return path.join(attemptRoot, `${attemptId}.json`);
 }
 
-async function writeJsonAtomically(filePath: string, value: unknown): Promise<void> {
+async function writeTextAtomically(filePath: string, text: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\r\n`, 'utf8');
+  await writeFile(temporaryPath, text, 'utf8');
   await rename(temporaryPath, filePath);
+}
+
+async function writeJsonAtomically(filePath: string, value: unknown): Promise<void> {
+  await writeTextAtomically(filePath, `${JSON.stringify(value, null, 2)}\r\n`);
 }
 
 export async function getLocalCaptureAttempt(attemptId: string): Promise<CaptureAttempt> {
@@ -312,32 +328,47 @@ function assertPolicySelection(
   }
 }
 
-export async function createPolicyCaptureAttempt(
+async function createPolicyCaptureAttemptUnlocked(
   policy: CapturePolicy,
   input: CreatePolicyCaptureAttemptRequest,
+  options: { specimenId?: string; replacesAttemptId?: string } = {},
 ): Promise<CaptureAttempt> {
   assertPolicySelection(policy, input);
   const attempts = await listLocalCaptureAttempts();
-  let specimenId = input.sharedSpecimenId ?? randomUUID();
+  const selectedSharedSpecimenId = options.specimenId ?? input.sharedSpecimenId;
+  const specimenId = selectedSharedSpecimenId ?? randomUUID();
   let displayLabel = `Образец #${specimenId.slice(0, 8)}`;
 
-  if (input.specimenMode === 'shared' && input.sharedSpecimenId) {
+  if (input.specimenMode === 'shared' && selectedSharedSpecimenId) {
     const sameSpecimen = attempts.filter(
       (attempt) =>
         belongsToPolicy(attempt, policy) &&
         attempt.specimenMode === 'shared' &&
-        attempt.task.specimenId === input.sharedSpecimenId,
+        attempt.task.specimenId === selectedSharedSpecimenId,
     );
     if (sameSpecimen.length === 0) throw new Error('SHARED_SPECIMEN_NOT_FOUND');
     if (sameSpecimen.some((attempt) => attempt.task.sourcePh !== input.sourcePh)) {
       throw new Error('SHARED_SPECIMEN_PH_MISMATCH');
     }
-    const existing = sameSpecimen.find((attempt) => attempt.deviceRole === input.deviceRole);
-    if (existing?.status === 'active') return existing;
-    if (existing?.status === 'finalized' && existing.result?.included) {
+    const activeExisting = sameSpecimen.find(
+      (attempt) => attempt.deviceRole === input.deviceRole && attempt.status === 'active',
+    );
+    if (activeExisting) return activeExisting;
+    if (
+      sameSpecimen.some(
+        (attempt) =>
+          attempt.deviceRole === input.deviceRole &&
+          attempt.status === 'finalized' &&
+          attempt.result?.included,
+      )
+    ) {
       throw new Error('SHARED_SPECIMEN_ROLE_COMPLETE');
     }
     displayLabel = sameSpecimen[0]?.displayLabel ?? displayLabel;
+  } else if (options.specimenId) {
+    displayLabel =
+      attempts.find((attempt) => attempt.task.specimenId === options.specimenId)?.displayLabel ??
+      displayLabel;
   }
 
   const summary = summarizeCapturePolicyQuotas(policy, attempts);
@@ -389,7 +420,9 @@ export async function createPolicyCaptureAttempt(
       angleLabel: input.angleLabel,
       distanceLabel: input.distanceLabel,
     },
-    reactionStartedAt: now,
+    reactionStartedAt: null,
+    diagnosticSavedAt: null,
+    reactionElapsedSec: null,
     finalMixturePh: null,
     uploads: {},
     createdAt: now,
@@ -401,10 +434,18 @@ export async function createPolicyCaptureAttempt(
     deviceRole: input.deviceRole,
     specimenMode: input.specimenMode,
     referencePh: input.referencePh,
+    replacesAttemptId: options.replacesAttemptId,
   });
 
   await writeJsonAtomically(attemptPath(attempt.id), attempt);
   return attempt;
+}
+
+export function createPolicyCaptureAttempt(
+  policy: CapturePolicy,
+  input: CreatePolicyCaptureAttemptRequest,
+): Promise<CaptureAttempt> {
+  return withCaptureTransition(() => createPolicyCaptureAttemptUnlocked(policy, input));
 }
 
 export async function createLocalCaptureAttempt(
@@ -424,7 +465,9 @@ export async function createLocalCaptureAttempt(
       angleLabel: input.angleLabel,
       distanceLabel: input.distanceLabel,
     },
-    reactionStartedAt: now,
+    reactionStartedAt: null,
+    diagnosticSavedAt: null,
+    reactionElapsedSec: null,
     finalMixturePh: null,
     uploads: {},
     createdAt: now,
@@ -436,32 +479,53 @@ export async function createLocalCaptureAttempt(
   return attempt;
 }
 
-export async function saveLocalAttemptUpload(
+async function saveLocalAttemptUploadUnlocked(
   attemptId: string,
   upload: CaptureAttemptUpload,
 ): Promise<CaptureAttempt> {
   const attempt = await getLocalCaptureAttempt(attemptId);
-  if (attempt.status === 'finalized') throw new Error('ATTEMPT_FINALIZED');
+  if (attempt.status !== 'active') throw new Error('ATTEMPT_NOT_ACTIVE');
 
   const slot = attempt.task.slots.find((item) => item.key === upload.slotKey);
   if (!slot || slot.kind !== upload.kind) throw new Error('SLOT_NOT_FOUND');
+  if (slot.kind === 'diagnostic' && !attempt.reactionStartedAt) {
+    throw new Error('REACTION_NOT_STARTED');
+  }
+
+  const reactionElapsedSec =
+    slot.kind === 'diagnostic' && attempt.reactionStartedAt
+      ? Math.max(
+          0,
+          (new Date(upload.savedAt).getTime() - new Date(attempt.reactionStartedAt).getTime()) /
+            1000,
+        )
+      : attempt.reactionElapsedSec;
 
   const updated: CaptureAttempt = {
     ...attempt,
     uploads: { ...attempt.uploads, [upload.slotKey]: upload },
+    diagnosticSavedAt: slot.kind === 'diagnostic' ? upload.savedAt : attempt.diagnosticSavedAt,
+    reactionElapsedSec,
     updatedAt: new Date().toISOString(),
   };
   await writeJsonAtomically(attemptPath(attemptId), updated);
   return updated;
 }
 
-export async function saveLocalAttemptSlotRoi(
+export function saveLocalAttemptUpload(
+  attemptId: string,
+  upload: CaptureAttemptUpload,
+): Promise<CaptureAttempt> {
+  return withCaptureTransition(() => saveLocalAttemptUploadUnlocked(attemptId, upload));
+}
+
+async function saveLocalAttemptSlotRoiUnlocked(
   attemptId: string,
   slotKey: string,
   roi: RoiShape,
 ): Promise<CaptureAttempt> {
   const attempt = await getLocalCaptureAttempt(attemptId);
-  if (attempt.status === 'finalized') throw new Error('ATTEMPT_FINALIZED');
+  if (attempt.status !== 'active') throw new Error('ATTEMPT_NOT_ACTIVE');
 
   const upload = attempt.uploads[slotKey];
   if (!upload) throw new Error('SLOT_UPLOAD_NOT_FOUND');
@@ -476,6 +540,102 @@ export async function saveLocalAttemptSlotRoi(
   };
   await writeJsonAtomically(attemptPath(attemptId), updated);
   return updated;
+}
+
+export function saveLocalAttemptSlotRoi(
+  attemptId: string,
+  slotKey: string,
+  roi: RoiShape,
+): Promise<CaptureAttempt> {
+  return withCaptureTransition(() => saveLocalAttemptSlotRoiUnlocked(attemptId, slotKey, roi));
+}
+
+export function startLocalCaptureReaction(
+  attemptId: string,
+  startedAt: Date = new Date(),
+): Promise<CaptureAttempt> {
+  return withCaptureTransition(async () => {
+    const attempt = await getLocalCaptureAttempt(attemptId);
+    if (attempt.status !== 'active') throw new Error('ATTEMPT_NOT_ACTIVE');
+    if (attempt.reactionStartedAt) return attempt;
+
+    const referenceSlot = attempt.task.slots.find((slot) => slot.kind === 'reference');
+    const referenceUpload = referenceSlot ? attempt.uploads[referenceSlot.key] : undefined;
+    if (!referenceUpload?.roi) throw new Error('REFERENCE_ROI_REQUIRED');
+    if (attempt.policySnapshot?.requirePolygonRoi && referenceUpload.roi.shape !== 'polygon') {
+      throw new Error('POLYGON_ROI_REQUIRED');
+    }
+    if (!Number.isFinite(startedAt.getTime())) throw new Error('INVALID_REACTION_START_TIME');
+
+    const updated: CaptureAttempt = {
+      ...attempt,
+      reactionStartedAt: startedAt.toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await writeJsonAtomically(attemptPath(attemptId), updated);
+    return updated;
+  });
+}
+
+export function replaceLocalCaptureAttempt(
+  policy: CapturePolicy,
+  attemptId: string,
+  input: CreateCaptureReplacementRequest,
+): Promise<{ previousAttempt: CaptureAttempt; replacementAttempt: CaptureAttempt }> {
+  return withCaptureTransition(async () => {
+    const previousAttempt = await getLocalCaptureAttempt(attemptId);
+    if (previousAttempt.replacedByAttemptId) {
+      return {
+        previousAttempt,
+        replacementAttempt: await getLocalCaptureAttempt(previousAttempt.replacedByAttemptId),
+      };
+    }
+    if (previousAttempt.status !== 'active' && previousAttempt.status !== 'finalized') {
+      throw new Error('ATTEMPT_NOT_REPLACEABLE');
+    }
+    if (!belongsToPolicy(previousAttempt, policy)) throw new Error('CAPTURE_POLICY_MISMATCH');
+    if (input.deviceRole !== previousAttempt.deviceRole) {
+      throw new Error('REPLACEMENT_DEVICE_ROLE_MISMATCH');
+    }
+    if (input.specimenChoice === 'same') {
+      if (input.specimenMode !== previousAttempt.specimenMode) {
+        throw new Error('SAME_SPECIMEN_MODE_MISMATCH');
+      }
+      if (input.sourcePh !== previousAttempt.task.sourcePh) {
+        throw new Error('SAME_SPECIMEN_PH_MISMATCH');
+      }
+    }
+
+    const { specimenChoice: _specimenChoice, ...selection } = input;
+    const replacementInput: CreatePolicyCaptureAttemptRequest = {
+      ...selection,
+      sharedSpecimenId: null,
+    };
+    const transitioned: CaptureAttempt = {
+      ...previousAttempt,
+      status: previousAttempt.status === 'finalized' ? 'superseded' : 'abandoned',
+      updatedAt: new Date().toISOString(),
+    };
+    await writeJsonAtomically(attemptPath(previousAttempt.id), transitioned);
+
+    let replacementAttempt: CaptureAttempt;
+    try {
+      replacementAttempt = await createPolicyCaptureAttemptUnlocked(policy, replacementInput, {
+        specimenId: input.specimenChoice === 'same' ? previousAttempt.task.specimenId : undefined,
+        replacesAttemptId: previousAttempt.id,
+      });
+    } catch (error) {
+      await writeJsonAtomically(attemptPath(previousAttempt.id), previousAttempt);
+      throw error;
+    }
+
+    const linkedPrevious: CaptureAttempt = {
+      ...transitioned,
+      replacedByAttemptId: replacementAttempt.id,
+    };
+    await writeJsonAtomically(attemptPath(previousAttempt.id), linkedPrevious);
+    return { previousAttempt: linkedPrevious, replacementAttempt };
+  });
 }
 
 async function readFreshCaptureCases(): Promise<FreshCaptureCase[]> {
@@ -521,15 +681,13 @@ async function ensureFreshCaseManifest(attempt: CaptureAttempt): Promise<void> {
   if (items.some((current) => current.id === item.id)) return;
 
   items.push(item);
-  await mkdir(captureRoot, { recursive: true });
-  await writeFile(
+  await writeTextAtomically(
     captureManifestPath,
     `${items.map((current) => JSON.stringify(current)).join('\r\n')}\r\n`,
-    'utf8',
   );
 }
 
-export async function finalizeLocalCaptureAttempt(
+async function finalizeLocalCaptureAttemptUnlocked(
   attemptId: string,
   input: FinalizeCaptureAttemptRequest,
 ): Promise<CaptureAttempt> {
@@ -538,17 +696,52 @@ export async function finalizeLocalCaptureAttempt(
     await ensureFreshCaseManifest(attempt);
     return attempt;
   }
+  if (attempt.status !== 'active') throw new Error('ATTEMPT_NOT_ACTIVE');
 
   const missing = attempt.task.slots
     .filter((slot) => slot.required && !attempt.uploads[slot.key])
     .map((slot) => slot.key);
   if (missing.length > 0) throw new Error(`REQUIRED_SLOTS_MISSING:${missing.join(',')}`);
 
+  const missingRois = attempt.task.slots
+    .filter((slot) => slot.required && !attempt.uploads[slot.key]?.roi)
+    .map((slot) => slot.key);
+  if (missingRois.length > 0) throw new Error(`REQUIRED_ROIS_MISSING:${missingRois.join(',')}`);
+
+  if (attempt.policySnapshot?.requirePolygonRoi) {
+    const invalidRois = attempt.task.slots
+      .filter((slot) => slot.required && attempt.uploads[slot.key]?.roi?.shape !== 'polygon')
+      .map((slot) => slot.key);
+    if (invalidRois.length > 0) {
+      throw new Error(`POLYGON_ROIS_REQUIRED:${invalidRois.join(',')}`);
+    }
+  }
+  if (attempt.policySnapshot && !attempt.reactionStartedAt) {
+    throw new Error('REACTION_NOT_STARTED');
+  }
+  if (
+    attempt.policySnapshot &&
+    !attempt.policySnapshot.showFinalMixturePh &&
+    input.finalMixturePh !== null
+  ) {
+    throw new Error('FINAL_MIXTURE_PH_NOT_ALLOWED');
+  }
+  if (attempt.policySnapshot?.requireFinalMixturePh && input.finalMixturePh === null) {
+    throw new Error('FINAL_MIXTURE_PH_REQUIRED');
+  }
+
   const finalizedAt = new Date().toISOString();
   const finalized: CaptureAttempt = {
     ...attempt,
     status: 'finalized',
-    finalMixturePh: attempt.task.taskType === 'blank_qc' ? null : input.finalMixturePh,
+    finalMixturePh:
+      attempt.task.taskType === 'blank_qc'
+        ? null
+        : attempt.policySnapshot
+          ? attempt.policySnapshot.showFinalMixturePh
+            ? input.finalMixturePh
+            : null
+          : input.finalMixturePh,
     updatedAt: finalizedAt,
     result: {
       caseId: randomUUID(),
@@ -561,6 +754,13 @@ export async function finalizeLocalCaptureAttempt(
   await writeJsonAtomically(attemptPath(attemptId), finalized);
   await ensureFreshCaseManifest(finalized);
   return finalized;
+}
+
+export function finalizeLocalCaptureAttempt(
+  attemptId: string,
+  input: FinalizeCaptureAttemptRequest,
+): Promise<CaptureAttempt> {
+  return withCaptureTransition(() => finalizeLocalCaptureAttemptUnlocked(attemptId, input));
 }
 
 export async function listFreshCaptureCases(): Promise<FreshCaptureCase[]> {

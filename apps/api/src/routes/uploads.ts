@@ -55,15 +55,19 @@ export const registerUploadRoutes: FastifyPluginAsync = async (app) => {
 
     try {
       const attempt = await getLocalCaptureAttempt(params.attemptId);
-      if (attempt.status === 'finalized') {
+      if (attempt.status !== 'active') {
         reply.code(409);
-        return { error: 'ATTEMPT_FINALIZED' };
+        return { error: 'ATTEMPT_NOT_ACTIVE' };
       }
 
       const slot = attempt.task.slots.find((item) => item.key === params.slotKey);
       if (!slot) {
         reply.code(404);
         return { error: 'SLOT_NOT_FOUND' };
+      }
+      if (slot.kind === 'diagnostic' && !attempt.reactionStartedAt) {
+        reply.code(409);
+        return { error: 'REACTION_NOT_STARTED' };
       }
 
       const encodedFileName = String(request.headers['x-file-name'] ?? `${slot.key}.jpg`);
@@ -92,7 +96,7 @@ export const registerUploadRoutes: FastifyPluginAsync = async (app) => {
         reply.code(404);
         return { error: message };
       }
-      if (message === 'ATTEMPT_FINALIZED') {
+      if (message === 'ATTEMPT_NOT_ACTIVE' || message === 'REACTION_NOT_STARTED') {
         reply.code(409);
         return { error: message };
       }

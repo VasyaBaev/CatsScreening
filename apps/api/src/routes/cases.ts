@@ -9,6 +9,7 @@
 import {
   CaptureContextQuerySchema,
   CaptureTaskSchema,
+  CreateCaptureReplacementRequestSchema,
   CreateCaseRequestSchema,
   CreatePolicyCaptureAttemptRequestSchema,
   FinalizeCaptureAttemptRequestSchema,
@@ -27,7 +28,9 @@ import {
   finalizeLocalCaptureAttempt,
   getLocalCaptureContext,
   getLocalCaptureAttempt,
+  replaceLocalCaptureAttempt,
   saveLocalAttemptSlotRoi,
+  startLocalCaptureReaction,
 } from '../services/local-capture-store.js';
 import { prisma } from '../services/prisma.js';
 
@@ -131,17 +134,29 @@ function storeError(reply: FastifyReply, error: unknown) {
     reply.code(404);
   } else if (
     message === 'ATTEMPT_FINALIZED' ||
+    message === 'ATTEMPT_NOT_ACTIVE' ||
+    message === 'ATTEMPT_NOT_REPLACEABLE' ||
     message === 'SLOT_UPLOAD_NOT_FOUND' ||
     message === 'CAPTURE_POLICY_DRAFT' ||
+    message === 'CAPTURE_POLICY_MISMATCH' ||
     message === 'CAPTURE_QUOTA_FULL' ||
     message === 'SHARED_SPECIMEN_ROLE_COMPLETE' ||
-    message.startsWith('REQUIRED_SLOTS_MISSING:')
+    message === 'REACTION_NOT_STARTED' ||
+    message === 'REFERENCE_ROI_REQUIRED' ||
+    message === 'POLYGON_ROI_REQUIRED' ||
+    message === 'FINAL_MIXTURE_PH_REQUIRED' ||
+    message.startsWith('REQUIRED_SLOTS_MISSING:') ||
+    message.startsWith('REQUIRED_ROIS_MISSING:') ||
+    message.startsWith('POLYGON_ROIS_REQUIRED:')
   ) {
     reply.code(409);
   } else if (
     message.endsWith('_NOT_ALLOWED') ||
     message === 'CAPTURE_QUOTA_NOT_DECLARED' ||
-    message === 'SHARED_SPECIMEN_PH_MISMATCH'
+    message === 'SHARED_SPECIMEN_PH_MISMATCH' ||
+    message === 'REPLACEMENT_DEVICE_ROLE_MISMATCH' ||
+    message === 'SAME_SPECIMEN_MODE_MISMATCH' ||
+    message === 'SAME_SPECIMEN_PH_MISMATCH'
   ) {
     reply.code(400);
   } else {
@@ -153,6 +168,10 @@ function storeError(reply: FastifyReply, error: unknown) {
     missingSlots: message.startsWith('REQUIRED_SLOTS_MISSING:')
       ? message.slice(message.indexOf(':') + 1).split(',')
       : undefined,
+    missingRois:
+      message.startsWith('REQUIRED_ROIS_MISSING:') || message.startsWith('POLYGON_ROIS_REQUIRED:')
+        ? message.slice(message.indexOf(':') + 1).split(',')
+        : undefined,
   };
 }
 
@@ -200,6 +219,36 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
     const params = request.params as { attemptId: string };
     try {
       return { attempt: await getLocalCaptureAttempt(params.attemptId) };
+    } catch (error) {
+      return storeError(reply, error);
+    }
+  });
+
+  app.post('/attempts/:attemptId/reaction/start', async (request, reply) => {
+    const params = request.params as { attemptId: string };
+    try {
+      return { attempt: await startLocalCaptureReaction(params.attemptId) };
+    } catch (error) {
+      return storeError(reply, error);
+    }
+  });
+
+  app.post('/attempts/:attemptId/replacement', async (request, reply) => {
+    const params = request.params as { attemptId: string };
+    const parsed = CreateCaptureReplacementRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'INVALID_REPLACEMENT_REQUEST', details: parsed.error.flatten() };
+    }
+
+    try {
+      const replacement = await replaceLocalCaptureAttempt(
+        activeCapturePolicy,
+        params.attemptId,
+        parsed.data,
+      );
+      reply.code(201);
+      return replacement;
     } catch (error) {
       return storeError(reply, error);
     }
