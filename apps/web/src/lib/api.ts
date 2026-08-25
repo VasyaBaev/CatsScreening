@@ -5,11 +5,15 @@
 import {
   type CaptureAttempt,
   type CaptureAttemptUpload,
-  type CaptureTask,
+  type CaptureContext,
+  CaptureContextSchema,
+  type CaptureContextQuery,
+  type CreateCaptureReplacementRequest,
+  CreateCaptureReplacementRequestSchema,
+  type CreatePolicyCaptureAttemptRequest,
+  CreatePolicyCaptureAttemptRequestSchema,
   CreateCaseRequest,
   CreateCaseRequestSchema,
-  type CreateCaptureAttemptRequest,
-  CreateCaptureAttemptRequestSchema,
   type FinalizeCaptureAttemptRequest,
   FinalizeCaptureAttemptRequestSchema,
   RoiLabelDataset,
@@ -81,22 +85,30 @@ export async function createCase(input: CreateCaseRequest): Promise<CreateCaseRe
   return response.json() as Promise<CreateCaseResponse>;
 }
 
-export async function fetchCaptureTask(code: string): Promise<CaptureTask> {
-  const response = await fetch(`/api/cases/tasks/${encodeURIComponent(code.trim())}`);
-  if (!response.ok) throw await responseError(response, 'Ошибка получения задания');
-
-  const body = (await response.json()) as { task: CaptureTask };
-  return body.task;
+export async function fetchCaptureContext(
+  query: CaptureContextQuery = {},
+  signal?: AbortSignal,
+): Promise<CaptureContext> {
+  const parameters = new URLSearchParams();
+  if (query.deviceRole) parameters.set('deviceRole', query.deviceRole);
+  if (query.specimenMode) parameters.set('specimenMode', query.specimenMode);
+  if (query.sourcePh !== undefined) parameters.set('sourcePh', String(query.sourcePh));
+  const suffix = parameters.size > 0 ? `?${parameters.toString()}` : '';
+  const response = await fetch(`/api/cases/context${suffix}`, { signal });
+  if (!response.ok) throw await responseError(response, 'Ошибка получения Capture context');
+  return CaptureContextSchema.parse(await response.json());
 }
 
 export async function createCaptureAttempt(
-  input: CreateCaptureAttemptRequest,
+  input: CreatePolicyCaptureAttemptRequest,
+  signal?: AbortSignal,
 ): Promise<CaptureAttempt> {
-  const parsed = CreateCaptureAttemptRequestSchema.parse(input);
+  const parsed = CreatePolicyCaptureAttemptRequestSchema.parse(input);
   const response = await fetch('/api/cases/attempts', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(parsed),
+    signal,
   });
   if (!response.ok) throw await responseError(response, 'Ошибка создания попытки');
 
@@ -104,8 +116,11 @@ export async function createCaptureAttempt(
   return body.attempt;
 }
 
-export async function fetchCaptureAttempt(attemptId: string): Promise<CaptureAttempt> {
-  const response = await fetch(`/api/cases/attempts/${encodeURIComponent(attemptId)}`);
+export async function fetchCaptureAttempt(
+  attemptId: string,
+  signal?: AbortSignal,
+): Promise<CaptureAttempt> {
+  const response = await fetch(`/api/cases/attempts/${encodeURIComponent(attemptId)}`, { signal });
   if (!response.ok) throw await responseError(response, 'Ошибка восстановления попытки');
 
   const body = (await response.json()) as AttemptResponse;
@@ -116,6 +131,7 @@ export function uploadCaptureSlot(input: {
   attemptId: string;
   slotKey: string;
   file: File;
+  signal?: AbortSignal;
   onProgress?: (loaded: number, total: number) => void;
 }): Promise<{ upload: CaptureAttemptUpload; attempt: CaptureAttempt }> {
   return new Promise((resolve, reject) => {
@@ -132,6 +148,26 @@ export function uploadCaptureSlot(input: {
       input.file.type.toLowerCase() === 'image/jpg' ? 'image/jpeg' : input.file.type;
     const contentType = declaredType || (extension ? extensionTypes[extension] : undefined);
     const request = new XMLHttpRequest();
+    let settled = false;
+    const cleanup = () => input.signal?.removeEventListener('abort', abortRequest);
+    const fail = (reason: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(reason);
+    };
+    const succeed = (value: { upload: CaptureAttemptUpload; attempt: CaptureAttempt }) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const abortRequest = () => request.abort();
+    if (input.signal?.aborted) {
+      fail(new Error('Загрузка отменена'));
+      return;
+    }
+    input.signal?.addEventListener('abort', abortRequest, { once: true });
     request.open(
       'PUT',
       `/api/uploads/attempts/${encodeURIComponent(input.attemptId)}/slots/${encodeURIComponent(input.slotKey)}`,
@@ -141,8 +177,8 @@ export function uploadCaptureSlot(input: {
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) input.onProgress?.(event.loaded, event.total);
     };
-    request.onerror = () => reject(new Error('Сетевая ошибка загрузки оригинала'));
-    request.onabort = () => reject(new Error('Загрузка отменена'));
+    request.onerror = () => fail(new Error('Сетевая ошибка загрузки оригинала'));
+    request.onabort = () => fail(new Error('Загрузка отменена'));
     request.onload = () => {
       let body: unknown = {};
       try {
@@ -152,10 +188,10 @@ export function uploadCaptureSlot(input: {
       }
 
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(`Ошибка загрузки (${request.status}): ${JSON.stringify(body)}`));
+        fail(new Error(`Ошибка загрузки (${request.status}): ${JSON.stringify(body)}`));
         return;
       }
-      resolve(body as { upload: CaptureAttemptUpload; attempt: CaptureAttempt });
+      succeed(body as { upload: CaptureAttemptUpload; attempt: CaptureAttempt });
     };
     request.send(input.file);
   });
@@ -165,6 +201,7 @@ export async function updateCaptureSlotRoi(
   attemptId: string,
   slotKey: string,
   roi: RoiShape,
+  signal?: AbortSignal,
 ): Promise<CaptureAttempt> {
   const response = await fetch(
     `/api/cases/attempts/${encodeURIComponent(attemptId)}/slots/${encodeURIComponent(slotKey)}`,
@@ -172,6 +209,7 @@ export async function updateCaptureSlotRoi(
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ roi }),
+      signal,
     },
   );
   if (!response.ok) throw await responseError(response, 'Ошибка сохранения ROI');
@@ -183,17 +221,53 @@ export async function updateCaptureSlotRoi(
 export async function finalizeCaptureAttempt(
   attemptId: string,
   input: FinalizeCaptureAttemptRequest,
+  signal?: AbortSignal,
 ): Promise<CaptureAttempt> {
   const parsed = FinalizeCaptureAttemptRequestSchema.parse(input);
   const response = await fetch(`/api/cases/attempts/${encodeURIComponent(attemptId)}/finalize`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(parsed),
+    signal,
   });
   if (!response.ok) throw await responseError(response, 'Ошибка завершения попытки');
 
   const body = (await response.json()) as AttemptResponse;
   return body.attempt;
+}
+
+export async function startCaptureReaction(
+  attemptId: string,
+  signal?: AbortSignal,
+): Promise<CaptureAttempt> {
+  const response = await fetch(
+    `/api/cases/attempts/${encodeURIComponent(attemptId)}/reaction/start`,
+    { method: 'POST', signal },
+  );
+  if (!response.ok) throw await responseError(response, 'Ошибка запуска реакции');
+
+  const body = (await response.json()) as AttemptResponse;
+  return body.attempt;
+}
+
+export async function replaceCaptureAttempt(
+  attemptId: string,
+  input: CreateCaptureReplacementRequest,
+  signal?: AbortSignal,
+): Promise<{ previousAttempt: CaptureAttempt; replacementAttempt: CaptureAttempt }> {
+  const parsed = CreateCaptureReplacementRequestSchema.parse(input);
+  const response = await fetch(`/api/cases/attempts/${encodeURIComponent(attemptId)}/replacement`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(parsed),
+    signal,
+  });
+  if (!response.ok) throw await responseError(response, 'Ошибка пересъёмки');
+
+  return response.json() as Promise<{
+    previousAttempt: CaptureAttempt;
+    replacementAttempt: CaptureAttempt;
+  }>;
 }
 
 export async function checkRoiAuth(auth: RoiAuthCredentials): Promise<{ ok: true; user: string }> {

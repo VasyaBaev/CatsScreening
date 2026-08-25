@@ -11,7 +11,7 @@ import {
   roiShapeToRect,
   type RoiPoint,
   type RoiRect,
-  type RoiShape
+  type RoiShape,
 } from '../lib/roi';
 
 type RectHandle = 'nw' | 'ne' | 'sw' | 'se';
@@ -35,6 +35,7 @@ type RoiEditorProps = {
   value?: RoiShape | null;
   onChange: (shape: RoiShape) => void;
   allowPolygon?: boolean;
+  requirePolygon?: boolean;
   placeholder?: string;
   compact?: boolean;
 };
@@ -51,7 +52,7 @@ function eventPoint(event: PointerEvent, image: HTMLImageElement | null): RoiPoi
 
   return {
     x: clamp((event.clientX - box.left) / box.width, 0, 1),
-    y: clamp((event.clientY - box.top) / box.height, 0, 1)
+    y: clamp((event.clientY - box.top) / box.height, 0, 1),
   };
 }
 
@@ -70,7 +71,7 @@ function resizeRect(start: RoiRect, point: RoiPoint, handle: RectHandle): RoiRec
     x: left,
     y: top,
     w: right - left,
-    h: bottom - top
+    h: bottom - top,
   });
 }
 
@@ -78,7 +79,7 @@ function moveRect(start: RoiRect, startPoint: RoiPoint, point: RoiPoint): RoiRec
   return clampRoiRect({
     ...start,
     x: start.x + point.x - startPoint.x,
-    y: start.y + point.y - startPoint.y
+    y: start.y + point.y - startPoint.y,
   });
 }
 
@@ -106,19 +107,27 @@ export function RoiEditor({
   value,
   onChange,
   allowPolygon = true,
+  requirePolygon = false,
   placeholder = 'Фото не выбрано',
-  compact = false
+  compact = false,
 }: RoiEditorProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const suppressClickRef = useRef(false);
-  const shape = value ?? rectToRoiShape(FIXED_WIDE_ROI);
+  const shape =
+    value ??
+    (requirePolygon
+      ? polygonToRoiShape(polygonFromRect(FIXED_WIDE_ROI))
+      : rectToRoiShape(FIXED_WIDE_ROI));
   const rect = roiShapeToRect(shape);
   const points = useMemo(() => polygonPoints(shape), [shape]);
   const [rectDrag, setRectDrag] = useState<RectDragState | null>(null);
   const [polygonDrag, setPolygonDrag] = useState<PolygonDragState | null>(null);
 
   function switchToRect() {
-    onChange(rectToRoiShape(shape.shape === 'polygon' ? boundingRectFromPoints(shape.points) : rect));
+    if (requirePolygon) return;
+    onChange(
+      rectToRoiShape(shape.shape === 'polygon' ? boundingRectFromPoints(shape.points) : rect),
+    );
   }
 
   function switchToPolygon() {
@@ -126,10 +135,18 @@ export function RoiEditor({
   }
 
   function reset() {
-    onChange(rectToRoiShape(FIXED_WIDE_ROI));
+    onChange(
+      requirePolygon
+        ? polygonToRoiShape(polygonFromRect(FIXED_WIDE_ROI))
+        : rectToRoiShape(FIXED_WIDE_ROI),
+    );
   }
 
-  function beginRectDrag(event: PointerEvent<HTMLElement>, type: RectDragState['type'], handle?: RectHandle) {
+  function beginRectDrag(
+    event: PointerEvent<HTMLElement>,
+    type: RectDragState['type'],
+    handle?: RectHandle,
+  ) {
     const point = eventPoint(event, imageRef.current);
     if (!point) return;
 
@@ -141,7 +158,7 @@ export function RoiEditor({
       pointerId: event.pointerId,
       handle,
       startPoint: point,
-      startRect: rect
+      startRect: rect,
     });
   }
 
@@ -185,12 +202,15 @@ export function RoiEditor({
   }
 
   function updatePolygonDrag(event: PointerEvent<HTMLDivElement>) {
-    if (!polygonDrag || polygonDrag.pointerId !== event.pointerId || shape.shape !== 'polygon') return;
+    if (!polygonDrag || polygonDrag.pointerId !== event.pointerId || shape.shape !== 'polygon')
+      return;
 
     const point = eventPoint(event, imageRef.current);
     if (!point) return;
 
-    const next = shape.points.map((item, index) => (index === polygonDrag.pointIndex ? point : item));
+    const next = shape.points.map((item, index) =>
+      index === polygonDrag.pointIndex ? point : item,
+    );
     onChange(polygonToRoiShape(next));
   }
 
@@ -202,7 +222,7 @@ export function RoiEditor({
   function deleteLastPolygonPoint() {
     if (shape.shape !== 'polygon') return;
     if (shape.points.length <= 3) {
-      switchToRect();
+      reset();
       return;
     }
     onChange(polygonToRoiShape(shape.points.slice(0, -1)));
@@ -215,6 +235,7 @@ export function RoiEditor({
           <button
             className={shape.shape === 'rect' ? 'active' : ''}
             type="button"
+            disabled={requirePolygon}
             onClick={switchToRect}
           >
             Прямоугольник
@@ -259,7 +280,7 @@ export function RoiEditor({
                   left: `${rect.x * 100}%`,
                   top: `${rect.y * 100}%`,
                   width: `${rect.w * 100}%`,
-                  height: `${rect.h * 100}%`
+                  height: `${rect.h * 100}%`,
                 }}
                 onPointerDown={(event) => beginRectDrag(event, 'move')}
               >
@@ -284,7 +305,7 @@ export function RoiEditor({
                     className="roi-polygon-point"
                     style={{
                       left: `${point.x * 100}%`,
-                      top: `${point.y * 100}%`
+                      top: `${point.y * 100}%`,
                     }}
                     aria-label={`Точка ROI ${index + 1}`}
                     onPointerDown={(event) => beginPolygonPointDrag(event, index)}

@@ -8,13 +8,11 @@
 
 import {
   CaptureContextQuerySchema,
-  CaptureTaskSchema,
   CreateCaptureReplacementRequestSchema,
   CreateCaseRequestSchema,
   CreatePolicyCaptureAttemptRequestSchema,
   FinalizeCaptureAttemptRequestSchema,
   UpdateCaptureSlotRequestSchema,
-  type CaptureTask,
 } from '@cats-screening/shared';
 import type { Prisma } from '@prisma/client';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
@@ -33,96 +31,6 @@ import {
   startLocalCaptureReaction,
 } from '../services/local-capture-store.js';
 import { prisma } from '../services/prisma.js';
-
-const reactedSlots = [
-  {
-    key: 'reference',
-    kind: 'reference' as const,
-    label: 'До реакции',
-    required: true,
-    targetSeconds: null,
-    toleranceSeconds: null,
-  },
-  {
-    key: 'diagnostic',
-    kind: 'diagnostic' as const,
-    label: 'После реакции',
-    required: true,
-    targetSeconds: null,
-    toleranceSeconds: null,
-  },
-];
-
-function reactedTask(code: string, sourcePh: number): CaptureTask {
-  return CaptureTaskSchema.parse({
-    code,
-    taskType: 'reacted_specimen',
-    specimenId: `specimen-${code.toLowerCase()}`,
-    sourcePh,
-    slots: reactedSlots,
-  });
-}
-
-const tasks = new Map<string, CaptureTask>(
-  [
-    reactedTask('PH400', 4.0),
-    reactedTask('PH460', 4.6),
-    reactedTask('PH540', 5.4),
-    reactedTask('PH560', 5.6),
-    reactedTask('PH580', 5.8),
-    reactedTask('PH600', 6.0),
-    reactedTask('PH613', 6.13),
-    reactedTask('PH640', 6.4),
-    reactedTask('PH660', 6.6),
-    reactedTask('PH680', 6.8),
-    reactedTask('PH700', 7.0),
-    reactedTask('PH780', 7.8),
-    CaptureTaskSchema.parse({
-      code: 'BL613',
-      taskType: 'blank_qc',
-      specimenId: 'blank-ph-613',
-      sourcePh: 6.13,
-      slots: [
-        {
-          key: 'reference',
-          kind: 'reference',
-          label: 'Blank — исходный кадр',
-          required: true,
-          targetSeconds: null,
-          toleranceSeconds: null,
-        },
-        {
-          key: 'blank_qc',
-          kind: 'qc',
-          label: 'Blank QC pH 6.13',
-          required: true,
-          targetSeconds: null,
-          toleranceSeconds: null,
-        },
-      ],
-    }),
-  ].map((task) => [task.code, task]),
-);
-
-function taskByCode(code: string): CaptureTask | null {
-  const normalized = code.trim().toUpperCase();
-  const direct = tasks.get(normalized);
-  if (direct) return direct;
-
-  const match =
-    /^(PH(?:400|460|540|560|580|600|613|640|660|680|700|780)|BL613)-([A-Z0-9]{1,12})$/.exec(
-      normalized,
-    );
-  if (!match) return null;
-
-  const baseTask = tasks.get(match[1]);
-  if (!baseTask) return null;
-  return CaptureTaskSchema.parse({
-    ...baseTask,
-    code: normalized,
-    specimenId: `${baseTask.taskType === 'blank_qc' ? 'blank' : 'specimen'}-${normalized.toLowerCase()}`,
-  });
-}
 
 function storeError(reply: FastifyReply, error: unknown) {
   const message = error instanceof Error ? error.message : 'CAPTURE_STORE_ERROR';
@@ -183,16 +91,6 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'INVALID_CAPTURE_CONTEXT_QUERY', details: parsed.error.flatten() };
     }
     return getLocalCaptureContext(activeCapturePolicy, parsed.data);
-  });
-
-  app.get('/tasks/:code', async (request, reply) => {
-    const params = request.params as { code: string };
-    const task = taskByCode(params.code);
-    if (!task) {
-      reply.code(404);
-      return { error: 'TASK_NOT_FOUND' };
-    }
-    return { task };
   });
 
   app.post('/attempts', async (request, reply) => {

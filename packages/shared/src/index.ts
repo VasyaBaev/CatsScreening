@@ -609,17 +609,6 @@ export const CreateCaptureReplacementRequestSchema = CreatePolicyCaptureAttemptR
 );
 export type CreateCaptureReplacementRequest = z.infer<typeof CreateCaptureReplacementRequestSchema>;
 
-export const CreateCaptureAttemptRequestSchema = z.object({
-  taskCode: z.string().min(2).max(24),
-  operatorId: z.string().min(1).max(120),
-  device: z.string().min(1).max(160),
-  series: z.string().min(1).max(120),
-  lightLabel: z.string().min(1).max(120),
-  angleLabel: z.string().min(1).max(120),
-  distanceLabel: z.string().min(1).max(120),
-});
-export type CreateCaptureAttemptRequest = z.infer<typeof CreateCaptureAttemptRequestSchema>;
-
 export const UpdateCaptureSlotRequestSchema = z.object({
   roi: RoiShapeSchema,
 });

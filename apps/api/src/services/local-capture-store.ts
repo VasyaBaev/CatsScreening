@@ -24,7 +24,6 @@ import {
   type CaptureQuotaSummary,
   type CaptureSharedSpecimen,
   type CaptureTask,
-  type CreateCaptureAttemptRequest,
   type CreateCaptureReplacementRequest,
   type CreateCaseRequest,
   type CreatePolicyCaptureAttemptRequest,
@@ -446,37 +445,6 @@ export function createPolicyCaptureAttempt(
   input: CreatePolicyCaptureAttemptRequest,
 ): Promise<CaptureAttempt> {
   return withCaptureTransition(() => createPolicyCaptureAttemptUnlocked(policy, input));
-}
-
-export async function createLocalCaptureAttempt(
-  task: CaptureTask,
-  input: CreateCaptureAttemptRequest,
-): Promise<CaptureAttempt> {
-  const now = new Date().toISOString();
-  const attempt: CaptureAttempt = {
-    id: randomUUID(),
-    task,
-    status: 'active',
-    operatorId: input.operatorId,
-    device: input.device,
-    series: input.series,
-    condition: {
-      lightLabel: input.lightLabel,
-      angleLabel: input.angleLabel,
-      distanceLabel: input.distanceLabel,
-    },
-    reactionStartedAt: null,
-    diagnosticSavedAt: null,
-    reactionElapsedSec: null,
-    finalMixturePh: null,
-    uploads: {},
-    createdAt: now,
-    updatedAt: now,
-    result: null,
-  };
-
-  await writeJsonAtomically(attemptPath(attempt.id), attempt);
-  return attempt;
 }
 
 async function saveLocalAttemptUploadUnlocked(

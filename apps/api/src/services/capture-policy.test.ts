@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import {
+  CaptureAttemptSchema,
   CapturePolicySchema,
-  CaptureTaskSchema,
   type CapturePolicy,
   type CreatePolicyCaptureAttemptRequest,
 } from '@cats-screening/shared';
@@ -209,8 +210,10 @@ test('shared specimen доступен второй роли без ручног
 test('quota context считает temporary filesystem attempts и игнорирует legacy', async () => {
   const policy = activePolicy('quota');
   await store.createPolicyCaptureAttempt(policy, request());
-  await store.createLocalCaptureAttempt(
-    CaptureTaskSchema.parse({
+  const legacyId = randomUUID();
+  const legacyAttempt = CaptureAttemptSchema.parse({
+    id: legacyId,
+    task: {
       code: 'PH580-LEGACY',
       taskType: 'reacted_specimen',
       specimenId: 'legacy-specimen',
@@ -225,16 +228,29 @@ test('quota context считает temporary filesystem attempts и игнори
           toleranceSeconds: null,
         },
       ],
-    }),
-    {
-      taskCode: 'PH580-LEGACY',
-      operatorId: 'legacy',
-      device: 'legacy',
-      series: policy.seriesId,
+    },
+    status: 'active',
+    operatorId: 'legacy',
+    device: 'legacy',
+    series: policy.seriesId,
+    condition: {
       lightLabel: 'daylight',
       angleLabel: 'straight',
       distanceLabel: 'normal',
     },
+    reactionStartedAt: null,
+    finalMixturePh: null,
+    uploads: {},
+    createdAt: '2026-08-25T00:00:00.000Z',
+    updatedAt: '2026-08-25T00:00:00.000Z',
+    result: null,
+  });
+  const attemptDirectory = path.join(storageDirectory, 'capture-hotfix', 'attempts');
+  await mkdir(attemptDirectory, { recursive: true });
+  await writeFile(
+    path.join(attemptDirectory, `${legacyId}.json`),
+    `${JSON.stringify(legacyAttempt, null, 2)}\r\n`,
+    'utf8',
   );
 
   const context = await store.getLocalCaptureContext(policy);
