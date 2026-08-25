@@ -310,6 +310,200 @@ export type UploadImageResponse = z.infer<typeof UploadImageResponseSchema>;
 export const CaptureTaskTypeSchema = z.enum(['reacted_specimen', 'blank_qc']);
 export type CaptureTaskType = z.infer<typeof CaptureTaskTypeSchema>;
 
+export const CapturePolicyStatusSchema = z.enum(['draft', 'active']);
+export type CapturePolicyStatus = z.infer<typeof CapturePolicyStatusSchema>;
+
+export const CaptureSpecimenModeSchema = z.enum(['independent', 'shared']);
+export type CaptureSpecimenMode = z.infer<typeof CaptureSpecimenModeSchema>;
+
+export const CapturePolicyOptionSchema = z.object({
+  value: z.string().min(1).max(120),
+  label: z.string().min(1).max(160),
+});
+export type CapturePolicyOption = z.infer<typeof CapturePolicyOptionSchema>;
+
+export const CapturePolicyDeviceRoleSchema = z.object({
+  value: z.string().regex(/^[a-z0-9_-]+$/),
+  label: z.string().min(1).max(160),
+});
+export type CapturePolicyDeviceRole = z.infer<typeof CapturePolicyDeviceRoleSchema>;
+
+export const CapturePolicyQuotaSchema = z.object({
+  sourcePh: z.number().min(0).max(14),
+  deviceRole: z.string().regex(/^[a-z0-9_-]+$/),
+  specimenMode: CaptureSpecimenModeSchema,
+  target: z.number().int().positive(),
+});
+export type CapturePolicyQuota = z.infer<typeof CapturePolicyQuotaSchema>;
+
+export const CapturePolicySchema = z
+  .object({
+    policyId: z.string().min(1).max(120),
+    version: z.string().min(1).max(80),
+    seriesId: z.string().min(1).max(120),
+    status: CapturePolicyStatusSchema,
+    referencePh: z.number().min(0).max(14),
+    sourcePhValues: z.array(z.number().min(0).max(14)),
+    deviceRoles: z.array(CapturePolicyDeviceRoleSchema),
+    specimenModes: z.array(CaptureSpecimenModeSchema),
+    quotas: z.array(CapturePolicyQuotaSchema),
+    conditions: z.object({
+      lights: z.array(CapturePolicyOptionSchema),
+      angles: z.array(CapturePolicyOptionSchema),
+      distances: z.array(CapturePolicyOptionSchema),
+    }),
+    requirePolygonRoi: z.boolean(),
+    instruction: z.string().min(1).max(2000),
+    reactionTargetSeconds: z.number().int().positive().nullable(),
+    reactionToleranceSeconds: z.number().int().nonnegative().nullable(),
+    showFinalMixturePh: z.boolean(),
+    requireFinalMixturePh: z.boolean(),
+  })
+  .superRefine((policy, context) => {
+    const sourceValues = new Set(policy.sourcePhValues);
+    const roleValues = new Set(policy.deviceRoles.map((role) => role.value));
+    const modeValues = new Set(policy.specimenModes);
+
+    if (sourceValues.size !== policy.sourcePhValues.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['sourcePhValues'],
+        message: 'pH должны быть уникальны',
+      });
+    }
+    if (roleValues.size !== policy.deviceRoles.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['deviceRoles'],
+        message: 'Device roles должны быть уникальны',
+      });
+    }
+    if (modeValues.size !== policy.specimenModes.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['specimenModes'],
+        message: 'Specimen modes должны быть уникальны',
+      });
+    }
+
+    const timingIsComplete =
+      (policy.reactionTargetSeconds === null && policy.reactionToleranceSeconds === null) ||
+      (policy.reactionTargetSeconds !== null && policy.reactionToleranceSeconds !== null);
+    if (!timingIsComplete) {
+      context.addIssue({
+        code: 'custom',
+        path: ['reactionTargetSeconds'],
+        message: 'Target и tolerance должны быть одновременно заданы или null',
+      });
+    }
+    if (policy.requireFinalMixturePh && !policy.showFinalMixturePh) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requireFinalMixturePh'],
+        message: 'Скрытый finalMixturePh нельзя сделать обязательным',
+      });
+    }
+
+    const quotaKeys = new Set<string>();
+    policy.quotas.forEach((quota, index) => {
+      if (!sourceValues.has(quota.sourcePh)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['quotas', index, 'sourcePh'],
+          message: 'Quota ссылается на необъявленный source pH',
+        });
+      }
+      if (!roleValues.has(quota.deviceRole)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['quotas', index, 'deviceRole'],
+          message: 'Quota ссылается на необъявленный device role',
+        });
+      }
+      if (!modeValues.has(quota.specimenMode)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['quotas', index, 'specimenMode'],
+          message: 'Quota ссылается на необъявленный specimen mode',
+        });
+      }
+      const key = `${quota.sourcePh}:${quota.deviceRole}:${quota.specimenMode}`;
+      if (quotaKeys.has(key)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['quotas', index],
+          message: 'Quota cell должна быть уникальной',
+        });
+      }
+      quotaKeys.add(key);
+    });
+
+    if (policy.status === 'active') {
+      const requiredCollections = [
+        ['sourcePhValues', policy.sourcePhValues],
+        ['deviceRoles', policy.deviceRoles],
+        ['specimenModes', policy.specimenModes],
+        ['quotas', policy.quotas],
+        ['conditions', policy.conditions.lights],
+        ['conditions', policy.conditions.angles],
+        ['conditions', policy.conditions.distances],
+      ] as const;
+      for (const [path, values] of requiredCollections) {
+        if (values.length === 0) {
+          context.addIssue({
+            code: 'custom',
+            path: [path],
+            message: 'Active policy не может быть пустой',
+          });
+        }
+      }
+    }
+  });
+export type CapturePolicy = z.infer<typeof CapturePolicySchema>;
+
+export const CaptureQuotaCellSummarySchema = CapturePolicyQuotaSchema.extend({
+  actual: z.number().int().nonnegative(),
+  reserved: z.number().int().nonnegative(),
+  available: z.number().int().nonnegative(),
+});
+export type CaptureQuotaCellSummary = z.infer<typeof CaptureQuotaCellSummarySchema>;
+
+export const CaptureQuotaSummarySchema = z.object({
+  policyId: z.string().min(1),
+  policyVersion: z.string().min(1),
+  seriesId: z.string().min(1),
+  target: z.number().int().nonnegative(),
+  actual: z.number().int().nonnegative(),
+  reserved: z.number().int().nonnegative(),
+  available: z.number().int().nonnegative(),
+  cells: z.array(CaptureQuotaCellSummarySchema),
+});
+export type CaptureQuotaSummary = z.infer<typeof CaptureQuotaSummarySchema>;
+
+export const CaptureSharedSpecimenSchema = z.object({
+  specimenId: z.string().uuid(),
+  displayLabel: z.string().min(1),
+  sourcePh: z.number().min(0).max(14),
+  completedDeviceRoles: z.array(z.string()),
+  reservedDeviceRoles: z.array(z.string()),
+  missingDeviceRoles: z.array(z.string()),
+});
+export type CaptureSharedSpecimen = z.infer<typeof CaptureSharedSpecimenSchema>;
+
+export const CaptureContextQuerySchema = z.object({
+  deviceRole: z.string().optional(),
+  specimenMode: CaptureSpecimenModeSchema.optional(),
+  sourcePh: z.coerce.number().min(0).max(14).optional(),
+});
+export type CaptureContextQuery = z.infer<typeof CaptureContextQuerySchema>;
+
+export const CaptureContextSchema = z.object({
+  policy: CapturePolicySchema,
+  quotaSummary: CaptureQuotaSummarySchema,
+  availableSharedSpecimens: z.array(CaptureSharedSpecimenSchema),
+});
+export type CaptureContext = z.infer<typeof CaptureContextSchema>;
+
 export const CaptureSlotKindSchema = z.enum(['reference', 'diagnostic', 'qc']);
 export type CaptureSlotKind = z.infer<typeof CaptureSlotKindSchema>;
 
@@ -331,7 +525,7 @@ export const CaptureTaskSlotSchema = z
 export type CaptureTaskSlot = z.infer<typeof CaptureTaskSlotSchema>;
 
 export const CaptureTaskSchema = z.object({
-  code: z.string().min(2).max(24),
+  code: z.string().min(2).max(80),
   taskType: CaptureTaskTypeSchema,
   specimenId: z.string().min(1).max(80),
   sourcePh: z.number().min(0).max(14),
@@ -375,8 +569,29 @@ export const CaptureAttemptSchema = z.object({
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
   result: CaptureFinalizeResultSchema.nullable(),
+  policySnapshot: CapturePolicySchema.optional(),
+  pairId: z.string().uuid().optional(),
+  displayLabel: z.string().min(1).optional(),
+  deviceRole: z.string().optional(),
+  specimenMode: CaptureSpecimenModeSchema.optional(),
+  referencePh: z.number().min(0).max(14).optional(),
 });
 export type CaptureAttempt = z.infer<typeof CaptureAttemptSchema>;
+
+export const CreatePolicyCaptureAttemptRequestSchema = z.object({
+  sourcePh: z.number().min(0).max(14),
+  referencePh: z.number().min(0).max(14),
+  deviceRole: z.string().regex(/^[a-z0-9_-]+$/),
+  specimenMode: CaptureSpecimenModeSchema,
+  sharedSpecimenId: z.string().uuid().nullable().default(null),
+  operatorId: z.string().min(1).max(120),
+  lightLabel: z.string().min(1).max(120),
+  angleLabel: z.string().min(1).max(120),
+  distanceLabel: z.string().min(1).max(120),
+});
+export type CreatePolicyCaptureAttemptRequest = z.infer<
+  typeof CreatePolicyCaptureAttemptRequestSchema
+>;
 
 export const CreateCaptureAttemptRequestSchema = z.object({
   taskCode: z.string().min(2).max(24),

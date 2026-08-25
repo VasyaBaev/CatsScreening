@@ -7,18 +7,26 @@
  * - формат JSONL легко импортировать в будущий catalog builder.
  */
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import {
   CaptureAttemptSchema,
+  CaptureContextSchema,
+  CaptureQuotaSummarySchema,
   type CaptureAttempt,
   type CaptureAttemptUpload,
+  type CaptureContext,
+  type CaptureContextQuery,
+  type CapturePolicy,
+  type CaptureQuotaSummary,
+  type CaptureSharedSpecimen,
   type CaptureTask,
   type CreateCaptureAttemptRequest,
   type CreateCaseRequest,
+  type CreatePolicyCaptureAttemptRequest,
   type FinalizeCaptureAttemptRequest,
   type RoiShape,
 } from '@cats-screening/shared';
@@ -132,6 +140,271 @@ export async function getLocalCaptureAttempt(attemptId: string): Promise<Capture
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('ATTEMPT_NOT_FOUND');
     throw error;
   }
+}
+
+export async function listLocalCaptureAttempts(): Promise<CaptureAttempt[]> {
+  try {
+    const entries = (await readdir(attemptRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map((entry) => entry.name);
+    const attempts = await Promise.all(
+      entries.map(async (entry) => {
+        const raw = JSON.parse(await readFile(path.join(attemptRoot, entry), 'utf8')) as unknown;
+        return CaptureAttemptSchema.parse(raw);
+      }),
+    );
+    return attempts.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+function belongsToPolicy(attempt: CaptureAttempt, policy: CapturePolicy): boolean {
+  return (
+    attempt.policySnapshot?.policyId === policy.policyId &&
+    attempt.policySnapshot.seriesId === policy.seriesId
+  );
+}
+
+export function summarizeCapturePolicyQuotas(
+  policy: CapturePolicy,
+  attempts: CaptureAttempt[],
+): CaptureQuotaSummary {
+  const currentAttempts = attempts.filter((attempt) => belongsToPolicy(attempt, policy));
+  const cells = policy.quotas.map((quota) => {
+    const matching = currentAttempts.filter(
+      (attempt) =>
+        attempt.task.sourcePh === quota.sourcePh &&
+        attempt.deviceRole === quota.deviceRole &&
+        attempt.specimenMode === quota.specimenMode,
+    );
+    const actual = matching.filter(
+      (attempt) => attempt.status === 'finalized' && attempt.result?.included === true,
+    ).length;
+    const reserved = matching.filter((attempt) => attempt.status === 'active').length;
+    return {
+      ...quota,
+      actual,
+      reserved,
+      available: Math.max(0, quota.target - actual - reserved),
+    };
+  });
+
+  return CaptureQuotaSummarySchema.parse({
+    policyId: policy.policyId,
+    policyVersion: policy.version,
+    seriesId: policy.seriesId,
+    target: cells.reduce((total, cell) => total + cell.target, 0),
+    actual: cells.reduce((total, cell) => total + cell.actual, 0),
+    reserved: cells.reduce((total, cell) => total + cell.reserved, 0),
+    available: cells.reduce((total, cell) => total + cell.available, 0),
+    cells,
+  });
+}
+
+function availableSharedSpecimens(
+  policy: CapturePolicy,
+  attempts: CaptureAttempt[],
+  query: CaptureContextQuery,
+): CaptureSharedSpecimen[] {
+  if (query.specimenMode && query.specimenMode !== 'shared') return [];
+
+  const groups = new Map<
+    string,
+    {
+      displayLabel: string;
+      sourcePh: number;
+      completed: Set<string>;
+      reserved: Set<string>;
+    }
+  >();
+  for (const attempt of attempts) {
+    if (
+      !belongsToPolicy(attempt, policy) ||
+      attempt.specimenMode !== 'shared' ||
+      !attempt.deviceRole ||
+      !attempt.displayLabel
+    ) {
+      continue;
+    }
+    if (query.sourcePh !== undefined && attempt.task.sourcePh !== query.sourcePh) continue;
+
+    const group = groups.get(attempt.task.specimenId) ?? {
+      displayLabel: attempt.displayLabel,
+      sourcePh: attempt.task.sourcePh,
+      completed: new Set<string>(),
+      reserved: new Set<string>(),
+    };
+    if (attempt.status === 'active') group.reserved.add(attempt.deviceRole);
+    if (attempt.status === 'finalized' && attempt.result?.included) {
+      group.completed.add(attempt.deviceRole);
+    }
+    groups.set(attempt.task.specimenId, group);
+  }
+
+  const roles = policy.deviceRoles.map((role) => role.value);
+  return [...groups.entries()]
+    .map(([specimenId, group]) => ({
+      specimenId,
+      displayLabel: group.displayLabel,
+      sourcePh: group.sourcePh,
+      completedDeviceRoles: [...group.completed],
+      reservedDeviceRoles: [...group.reserved],
+      missingDeviceRoles: roles.filter(
+        (role) => !group.completed.has(role) && !group.reserved.has(role),
+      ),
+    }))
+    .filter(
+      (specimen) =>
+        !query.deviceRole ||
+        (!specimen.completedDeviceRoles.includes(query.deviceRole) &&
+          !specimen.reservedDeviceRoles.includes(query.deviceRole)),
+    );
+}
+
+export async function getLocalCaptureContext(
+  policy: CapturePolicy,
+  query: CaptureContextQuery = {},
+): Promise<CaptureContext> {
+  const attempts = await listLocalCaptureAttempts();
+  return CaptureContextSchema.parse({
+    policy,
+    quotaSummary: summarizeCapturePolicyQuotas(policy, attempts),
+    availableSharedSpecimens: availableSharedSpecimens(policy, attempts, query),
+  });
+}
+
+function assertPolicySelection(
+  policy: CapturePolicy,
+  input: CreatePolicyCaptureAttemptRequest,
+): void {
+  if (policy.status !== 'active') throw new Error('CAPTURE_POLICY_DRAFT');
+  if (!policy.sourcePhValues.includes(input.sourcePh)) throw new Error('SOURCE_PH_NOT_ALLOWED');
+  if (input.referencePh !== policy.referencePh) throw new Error('REFERENCE_PH_NOT_ALLOWED');
+  if (!policy.deviceRoles.some((role) => role.value === input.deviceRole)) {
+    throw new Error('DEVICE_ROLE_NOT_ALLOWED');
+  }
+  if (!policy.specimenModes.includes(input.specimenMode)) {
+    throw new Error('SPECIMEN_MODE_NOT_ALLOWED');
+  }
+  if (!policy.conditions.lights.some((option) => option.value === input.lightLabel)) {
+    throw new Error('LIGHT_NOT_ALLOWED');
+  }
+  if (!policy.conditions.angles.some((option) => option.value === input.angleLabel)) {
+    throw new Error('ANGLE_NOT_ALLOWED');
+  }
+  if (!policy.conditions.distances.some((option) => option.value === input.distanceLabel)) {
+    throw new Error('DISTANCE_NOT_ALLOWED');
+  }
+  if (
+    !policy.quotas.some(
+      (quota) =>
+        quota.sourcePh === input.sourcePh &&
+        quota.deviceRole === input.deviceRole &&
+        quota.specimenMode === input.specimenMode,
+    )
+  ) {
+    throw new Error('CAPTURE_QUOTA_NOT_DECLARED');
+  }
+  if (input.specimenMode === 'independent' && input.sharedSpecimenId) {
+    throw new Error('SHARED_SPECIMEN_NOT_ALLOWED');
+  }
+}
+
+export async function createPolicyCaptureAttempt(
+  policy: CapturePolicy,
+  input: CreatePolicyCaptureAttemptRequest,
+): Promise<CaptureAttempt> {
+  assertPolicySelection(policy, input);
+  const attempts = await listLocalCaptureAttempts();
+  let specimenId = input.sharedSpecimenId ?? randomUUID();
+  let displayLabel = `Образец #${specimenId.slice(0, 8)}`;
+
+  if (input.specimenMode === 'shared' && input.sharedSpecimenId) {
+    const sameSpecimen = attempts.filter(
+      (attempt) =>
+        belongsToPolicy(attempt, policy) &&
+        attempt.specimenMode === 'shared' &&
+        attempt.task.specimenId === input.sharedSpecimenId,
+    );
+    if (sameSpecimen.length === 0) throw new Error('SHARED_SPECIMEN_NOT_FOUND');
+    if (sameSpecimen.some((attempt) => attempt.task.sourcePh !== input.sourcePh)) {
+      throw new Error('SHARED_SPECIMEN_PH_MISMATCH');
+    }
+    const existing = sameSpecimen.find((attempt) => attempt.deviceRole === input.deviceRole);
+    if (existing?.status === 'active') return existing;
+    if (existing?.status === 'finalized' && existing.result?.included) {
+      throw new Error('SHARED_SPECIMEN_ROLE_COMPLETE');
+    }
+    displayLabel = sameSpecimen[0]?.displayLabel ?? displayLabel;
+  }
+
+  const summary = summarizeCapturePolicyQuotas(policy, attempts);
+  const quota = summary.cells.find(
+    (cell) =>
+      cell.sourcePh === input.sourcePh &&
+      cell.deviceRole === input.deviceRole &&
+      cell.specimenMode === input.specimenMode,
+  );
+  if (!quota || quota.available === 0) throw new Error('CAPTURE_QUOTA_FULL');
+
+  const pairId = randomUUID();
+  const now = new Date().toISOString();
+  const task: CaptureTask = {
+    code: pairId,
+    taskType: 'reacted_specimen',
+    specimenId,
+    sourcePh: input.sourcePh,
+    slots: [
+      {
+        key: 'reference',
+        kind: 'reference',
+        label: 'До реакции',
+        required: true,
+        targetSeconds: null,
+        toleranceSeconds: null,
+      },
+      {
+        key: 'diagnostic',
+        kind: 'diagnostic',
+        label: 'После реакции',
+        required: true,
+        targetSeconds: policy.reactionTargetSeconds,
+        toleranceSeconds: policy.reactionToleranceSeconds,
+      },
+    ],
+  };
+  const deviceLabel =
+    policy.deviceRoles.find((role) => role.value === input.deviceRole)?.label ?? input.deviceRole;
+  const attempt = CaptureAttemptSchema.parse({
+    id: randomUUID(),
+    task,
+    status: 'active',
+    operatorId: input.operatorId,
+    device: deviceLabel,
+    series: policy.seriesId,
+    condition: {
+      lightLabel: input.lightLabel,
+      angleLabel: input.angleLabel,
+      distanceLabel: input.distanceLabel,
+    },
+    reactionStartedAt: now,
+    finalMixturePh: null,
+    uploads: {},
+    createdAt: now,
+    updatedAt: now,
+    result: null,
+    policySnapshot: policy,
+    pairId,
+    displayLabel,
+    deviceRole: input.deviceRole,
+    specimenMode: input.specimenMode,
+    referencePh: input.referencePh,
+  });
+
+  await writeJsonAtomically(attemptPath(attempt.id), attempt);
+  return attempt;
 }
 
 export async function createLocalCaptureAttempt(

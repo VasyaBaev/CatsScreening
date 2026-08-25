@@ -7,9 +7,10 @@
  */
 
 import {
+  CaptureContextQuerySchema,
   CaptureTaskSchema,
-  CreateCaptureAttemptRequestSchema,
   CreateCaseRequestSchema,
+  CreatePolicyCaptureAttemptRequestSchema,
   FinalizeCaptureAttemptRequestSchema,
   UpdateCaptureSlotRequestSchema,
   type CaptureTask,
@@ -19,10 +20,12 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 
 import { runQualityChecks } from '@cats-screening/cv-core';
 
+import { activeCapturePolicy } from '../config/active-capture-policy.js';
 import {
   appendLocalCase,
-  createLocalCaptureAttempt,
+  createPolicyCaptureAttempt,
   finalizeLocalCaptureAttempt,
+  getLocalCaptureContext,
   getLocalCaptureAttempt,
   saveLocalAttemptSlotRoi,
 } from '../services/local-capture-store.js';
@@ -120,14 +123,27 @@ function taskByCode(code: string): CaptureTask | null {
 
 function storeError(reply: FastifyReply, error: unknown) {
   const message = error instanceof Error ? error.message : 'CAPTURE_STORE_ERROR';
-  if (message === 'ATTEMPT_NOT_FOUND' || message === 'SLOT_NOT_FOUND') {
+  if (
+    message === 'ATTEMPT_NOT_FOUND' ||
+    message === 'SLOT_NOT_FOUND' ||
+    message === 'SHARED_SPECIMEN_NOT_FOUND'
+  ) {
     reply.code(404);
   } else if (
     message === 'ATTEMPT_FINALIZED' ||
     message === 'SLOT_UPLOAD_NOT_FOUND' ||
+    message === 'CAPTURE_POLICY_DRAFT' ||
+    message === 'CAPTURE_QUOTA_FULL' ||
+    message === 'SHARED_SPECIMEN_ROLE_COMPLETE' ||
     message.startsWith('REQUIRED_SLOTS_MISSING:')
   ) {
     reply.code(409);
+  } else if (
+    message.endsWith('_NOT_ALLOWED') ||
+    message === 'CAPTURE_QUOTA_NOT_DECLARED' ||
+    message === 'SHARED_SPECIMEN_PH_MISMATCH'
+  ) {
+    reply.code(400);
   } else {
     throw error;
   }
@@ -141,6 +157,15 @@ function storeError(reply: FastifyReply, error: unknown) {
 }
 
 export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/context', async (request, reply) => {
+    const parsed = CaptureContextQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'INVALID_CAPTURE_CONTEXT_QUERY', details: parsed.error.flatten() };
+    }
+    return getLocalCaptureContext(activeCapturePolicy, parsed.data);
+  });
+
   app.get('/tasks/:code', async (request, reply) => {
     const params = request.params as { code: string };
     const task = taskByCode(params.code);
@@ -152,21 +177,23 @@ export const registerCaseRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/attempts', async (request, reply) => {
-    const parsed = CreateCaptureAttemptRequestSchema.safeParse(request.body);
+    const parsed = CreatePolicyCaptureAttemptRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400);
       return { error: 'INVALID_ATTEMPT_REQUEST', details: parsed.error.flatten() };
     }
 
-    const task = taskByCode(parsed.data.taskCode);
-    if (!task) {
-      reply.code(404);
-      return { error: 'TASK_NOT_FOUND' };
+    try {
+      const attempt = await createPolicyCaptureAttempt(activeCapturePolicy, parsed.data);
+      reply.code(201);
+      return { attempt };
+    } catch (error) {
+      const response = storeError(reply, error);
+      if (response.error === 'CAPTURE_POLICY_DRAFT') {
+        return { ...response, message: activeCapturePolicy.instruction };
+      }
+      return response;
     }
-
-    const attempt = await createLocalCaptureAttempt(task, parsed.data);
-    reply.code(201);
-    return { attempt };
   });
 
   app.get('/attempts/:attemptId', async (request, reply) => {
