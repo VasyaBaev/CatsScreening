@@ -73,6 +73,10 @@ export const registerUploadRoutes: FastifyPluginAsync = async (app) => {
         reply.code(409);
         return { error: 'REACTION_NOT_STARTED' };
       }
+      if (slot.kind === 'diagnostic' && attempt.uploads[slot.key]) {
+        reply.code(409);
+        return { error: 'DIAGNOSTIC_LOCKED_AFTER_UPLOAD' };
+      }
 
       const encodedFileName = String(request.headers['x-file-name'] ?? `${slot.key}.jpg`);
       let fileName = encodedFileName;
@@ -103,6 +107,7 @@ export const registerUploadRoutes: FastifyPluginAsync = async (app) => {
       if (
         message === 'ATTEMPT_NOT_ACTIVE' ||
         message === 'REFERENCE_LOCKED_AFTER_REACTION' ||
+        message === 'DIAGNOSTIC_LOCKED_AFTER_UPLOAD' ||
         message === 'REACTION_NOT_STARTED'
       ) {
         reply.code(409);

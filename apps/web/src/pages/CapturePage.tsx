@@ -122,7 +122,7 @@ function draftsForAttempt(attempt: CaptureAttempt): Record<string, SlotDraft> {
           previewUrl: upload?.publicUrl ?? null,
           localPreview: false,
           roi: upload?.roi ?? freshRoi(requirePolygon),
-          status: upload?.roi ? 'saved' : 'empty',
+          status: upload ? 'saved' : 'empty',
           progress: null,
           error: null,
           roiDirty: Boolean(upload && !upload.roi),
@@ -153,7 +153,7 @@ function slotStatus(draft: SlotDraft): string {
   if (draft.status === 'uploading') {
     return draft.progress === null ? 'Сервер сохраняет…' : 'Передано ' + draft.progress + '%';
   }
-  if (draft.status === 'saved' && draft.roiDirty) return 'ROI изменена';
+  if (draft.status === 'saved' && draft.roiDirty) return 'ROI нужно сохранить';
   if (draft.status === 'saved') return 'Сохранено';
   if (draft.status === 'error') return 'Нужен повтор';
   if (draft.file) return 'Готово к загрузке';
@@ -224,12 +224,12 @@ export function CapturePage() {
 
   const referenceSlot = attempt?.task.slots.find((slot) => slot.kind === 'reference');
   const referenceUpload = referenceSlot ? attempt?.uploads[referenceSlot.key] : undefined;
-  const referenceReady = Boolean(
-    referenceSlot &&
-    referenceUpload?.roi &&
-    (!policy?.requirePolygonRoi || referenceUpload.roi.shape === 'polygon') &&
-    drafts[referenceSlot.key]?.status === 'saved' &&
-    !drafts[referenceSlot.key]?.roiDirty,
+  const referenceDraft = referenceSlot ? drafts[referenceSlot.key] : undefined;
+  const referenceCaptured = Boolean(referenceUpload && !referenceDraft?.file);
+  const diagnosticSaved = Boolean(
+    attempt?.task.slots.some(
+      (slot) => slot.kind === 'diagnostic' && Boolean(attempt.uploads[slot.key]),
+    ),
   );
   const ready = Boolean(
     attempt?.status === 'active' &&
@@ -643,13 +643,15 @@ export function CapturePage() {
     await runOperation(
       {
         kind: hasFile ? 'upload' : 'roi',
-        title: hasFile ? 'Сохраняем оригинал и ROI' : 'Сохраняем ROI',
+        title: hasFile ? 'Сохраняем оригинал' : 'Сохраняем ROI',
         stage: hasFile ? 'Передаём исходный файл…' : 'Сервер сохраняет ROI…',
-        successMessage: hasFile ? 'Исходный файл и ROI сохранены.' : 'Изменённая ROI сохранена.',
+        successMessage: hasFile
+          ? 'Исходный файл сохранён. ROI можно разметить отдельно.'
+          : 'Изменённая ROI сохранена.',
         reconcileAttemptId: attempt.id,
         retryDraft: { slotKey, draft },
       },
-      async ({ signal, setProgress, setStage }) => {
+      async ({ signal, setProgress }) => {
         if (draft.file) {
           const uploaded = await uploadCaptureSlot({
             attemptId: attempt.id,
@@ -663,7 +665,14 @@ export function CapturePage() {
             },
           });
           setAttempt(uploaded.attempt);
-          setStage('Оригинал передан. Сервер сохраняет ROI…');
+          updateDraft(slotKey, {
+            file: null,
+            status: 'saved',
+            progress: null,
+            error: null,
+            roiDirty: true,
+          });
+          return;
         }
         const updated = await updateCaptureSlotRoi(attempt.id, slotKey, draft.roi, signal);
         setAttempt(updated);
@@ -679,7 +688,7 @@ export function CapturePage() {
   }
 
   async function beginReaction() {
-    if (!attempt || !referenceReady || attempt.reactionStartedAt) return;
+    if (!attempt || !referenceCaptured || attempt.reactionStartedAt) return;
     await runOperation(
       {
         kind: 'reaction',
@@ -1102,8 +1111,17 @@ export function CapturePage() {
           <div className="capture-slot-list">
             {attempt.task.slots.map((slot) => {
               const diagnosticLocked = slot.kind === 'diagnostic' && !attempt.reactionStartedAt;
-              const referenceLocked =
-                slot.kind === 'reference' && Boolean(attempt.reactionStartedAt);
+              const hasUpload = Boolean(attempt.uploads[slot.key]);
+              const referenceDuringReaction =
+                slot.kind === 'reference' && Boolean(attempt.reactionStartedAt) && !diagnosticSaved;
+              const commonLocked = terminal || replacementMode;
+              const photoDisabled =
+                commonLocked ||
+                diagnosticLocked ||
+                (slot.kind === 'reference' && Boolean(attempt.reactionStartedAt)) ||
+                (slot.kind === 'diagnostic' && hasUpload);
+              const roiDisabled =
+                commonLocked || diagnosticLocked || !hasUpload || referenceDuringReaction;
               return (
                 <CaptureSlot
                   key={slot.key}
@@ -1112,13 +1130,22 @@ export function CapturePage() {
                   elapsed={elapsed}
                   reactionStarted={Boolean(attempt.reactionStartedAt)}
                   requirePolygon={policy?.requirePolygonRoi ?? false}
-                  disabled={terminal || replacementMode || diagnosticLocked || referenceLocked}
+                  photoDisabled={photoDisabled}
+                  roiDisabled={roiDisabled}
                   lockedReason={
-                    diagnosticLocked
-                      ? 'Сначала сохраните reference и нажмите «Начать реакцию».'
-                      : referenceLocked
-                        ? 'Reference зафиксирован при старте реакции и больше не изменяется.'
-                        : null
+                    terminal
+                      ? 'Пара завершена. Для исправления используйте «Переснять пару».'
+                      : replacementMode
+                        ? 'Сначала создайте replacement-пару.'
+                        : diagnosticLocked
+                          ? 'Сначала сохраните reference и нажмите «Начать реакцию».'
+                          : referenceDuringReaction
+                            ? 'Reference временно зафиксирован до сохранения diagnostic.'
+                            : slot.kind === 'reference' && attempt.reactionStartedAt
+                              ? 'Фото reference зафиксировано. ROI можно редактировать.'
+                              : slot.kind === 'diagnostic' && hasUpload
+                                ? 'Фото diagnostic зафиксировано. ROI можно редактировать.'
+                                : null
                   }
                   onFile={(file) => chooseFile(slot.key, file)}
                   onRoi={(roi) => changeRoi(slot.key, roi)}
@@ -1132,11 +1159,11 @@ export function CapturePage() {
 
       {attempt?.status === 'active' &&
       !attempt.reactionStartedAt &&
-      referenceReady &&
+      referenceCaptured &&
       !replacementMode ? (
         <section className="panel capture-reaction-action">
           <h2>Reference сохранён</h2>
-          <p>Нажмите кнопку непосредственно перед началом смешивания.</p>
+          <p>ROI можно разметить сейчас или после diagnostic. Нажмите кнопку перед смешиванием.</p>
           <button type="button" className="primary" onClick={() => void beginReaction()}>
             Начать реакцию
           </button>
@@ -1317,7 +1344,8 @@ function CaptureSlot(props: {
   elapsed: number;
   reactionStarted: boolean;
   requirePolygon: boolean;
-  disabled: boolean;
+  photoDisabled: boolean;
+  roiDisabled: boolean;
   lockedReason: string | null;
   onFile: (file: File | null) => void;
   onRoi: (roi: RoiShape) => void;
@@ -1327,6 +1355,8 @@ function CaptureSlot(props: {
   if (!draft) return null;
   const hasAction = Boolean(draft.file || draft.roiDirty);
   const uploading = draft.status === 'uploading';
+  const controlsLocked = props.photoDisabled && props.roiDisabled;
+  const actionDisabled = draft.file ? props.photoDisabled : props.roiDisabled;
   const action = draft.file
     ? draft.status === 'error'
       ? 'Повторить загрузку'
@@ -1336,7 +1366,7 @@ function CaptureSlot(props: {
   return (
     <article
       className={
-        'panel capture-slot-card slot-' + draft.status + (props.disabled ? ' is-locked' : '')
+        'panel capture-slot-card slot-' + draft.status + (controlsLocked ? ' is-locked' : '')
       }
     >
       <div className="capture-slot-head">
@@ -1368,7 +1398,7 @@ function CaptureSlot(props: {
         src={draft.previewUrl}
         alt={slot.label}
         value={draft.roi}
-        onChange={props.disabled ? () => undefined : props.onRoi}
+        onChange={props.roiDisabled ? () => undefined : props.onRoi}
         allowPolygon
         requirePolygon={props.requirePolygon}
         compact
@@ -1384,13 +1414,15 @@ function CaptureSlot(props: {
           : 'В ROI должен быть только чистый наполнитель — без бортика, плитки и фона.'}
       </p>
 
-      <label className={'file-button capture-file-button ' + (props.disabled ? 'is-disabled' : '')}>
+      <label
+        className={'file-button capture-file-button ' + (props.photoDisabled ? 'is-disabled' : '')}
+      >
         {draft.previewUrl ? 'Снять / выбрать замену' : 'Снять / выбрать фото'}
         <input
           type="file"
           accept="image/*"
           capture="environment"
-          disabled={props.disabled}
+          disabled={props.photoDisabled}
           onChange={(event) => {
             props.onFile(event.target.files?.[0] ?? null);
             event.currentTarget.value = '';
@@ -1415,7 +1447,7 @@ function CaptureSlot(props: {
         <button
           type="button"
           className="primary capture-slot-action"
-          disabled={props.disabled || uploading}
+          disabled={actionDisabled || uploading}
           onClick={props.onSave}
         >
           {uploading ? slotStatus(draft) : action}

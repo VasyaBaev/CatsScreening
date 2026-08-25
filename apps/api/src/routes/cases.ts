@@ -51,9 +51,10 @@ function storeError(reply: FastifyReply, error: unknown) {
     message === 'CAPTURE_QUOTA_FULL' ||
     message === 'SHARED_SPECIMEN_ROLE_COMPLETE' ||
     message === 'REFERENCE_LOCKED_AFTER_REACTION' ||
+    message === 'REFERENCE_ROI_LOCKED_UNTIL_DIAGNOSTIC' ||
+    message === 'DIAGNOSTIC_LOCKED_AFTER_UPLOAD' ||
     message === 'REACTION_NOT_STARTED' ||
-    message === 'REFERENCE_ROI_REQUIRED' ||
-    message === 'POLYGON_ROI_REQUIRED' ||
+    message === 'REFERENCE_UPLOAD_REQUIRED' ||
     message === 'FINAL_MIXTURE_PH_REQUIRED' ||
     message.startsWith('REQUIRED_SLOTS_MISSING:') ||
     message.startsWith('REQUIRED_ROIS_MISSING:') ||

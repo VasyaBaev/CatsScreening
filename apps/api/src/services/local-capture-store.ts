@@ -561,6 +561,9 @@ async function saveLocalAttemptUploadUnlocked(
   if (slot.kind === 'diagnostic' && !attempt.reactionStartedAt) {
     throw new Error('REACTION_NOT_STARTED');
   }
+  if (slot.kind === 'diagnostic' && attempt.uploads[slot.key]) {
+    throw new Error('DIAGNOSTIC_LOCKED_AFTER_UPLOAD');
+  }
 
   const reactionElapsedSec =
     slot.kind === 'diagnostic' && attempt.reactionStartedAt
@@ -600,7 +603,10 @@ async function saveLocalAttemptSlotRoiUnlocked(
   const upload = attempt.uploads[slotKey];
   if (!upload) throw new Error('SLOT_UPLOAD_NOT_FOUND');
   if (upload.kind === 'reference' && attempt.reactionStartedAt) {
-    throw new Error('REFERENCE_LOCKED_AFTER_REACTION');
+    const diagnosticSaved = attempt.task.slots.some(
+      (slot) => slot.kind === 'diagnostic' && Boolean(attempt.uploads[slot.key]),
+    );
+    if (!diagnosticSaved) throw new Error('REFERENCE_ROI_LOCKED_UNTIL_DIAGNOSTIC');
   }
 
   const updated: CaptureAttempt = {
@@ -634,10 +640,7 @@ export function startLocalCaptureReaction(
 
     const referenceSlot = attempt.task.slots.find((slot) => slot.kind === 'reference');
     const referenceUpload = referenceSlot ? attempt.uploads[referenceSlot.key] : undefined;
-    if (!referenceUpload?.roi) throw new Error('REFERENCE_ROI_REQUIRED');
-    if (attempt.policySnapshot?.requirePolygonRoi && referenceUpload.roi.shape !== 'polygon') {
-      throw new Error('POLYGON_ROI_REQUIRED');
-    }
+    if (!referenceUpload) throw new Error('REFERENCE_UPLOAD_REQUIRED');
     if (!Number.isFinite(startedAt.getTime())) throw new Error('INVALID_REACTION_START_TIME');
 
     const updated: CaptureAttempt = {

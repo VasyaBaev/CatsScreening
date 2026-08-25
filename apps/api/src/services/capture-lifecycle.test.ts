@@ -132,19 +132,13 @@ async function makeFinalizable(attempt: CaptureAttempt): Promise<CaptureAttempt>
   return store.saveLocalAttemptSlotRoi(attempt.id, 'diagnostic', polygonRoi);
 }
 
-test('reaction start требует reference upload с polygon ROI и идемпотентен', async () => {
+test('reaction start требует только reference upload и идемпотентен', async () => {
   const currentPolicy = policy('reaction');
   const attempt = await store.createPolicyCaptureAttempt(currentPolicy, selection());
   assert.equal(attempt.reactionStartedAt, null);
-  await assert.rejects(store.startLocalCaptureReaction(attempt.id), /REFERENCE_ROI_REQUIRED/);
+  await assert.rejects(store.startLocalCaptureReaction(attempt.id), /REFERENCE_UPLOAD_REQUIRED/);
 
-  await saveReference(attempt, {
-    shape: 'rect',
-    source: 'manual',
-    rect: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
-  });
-  await assert.rejects(store.startLocalCaptureReaction(attempt.id), /POLYGON_ROI_REQUIRED/);
-  await store.saveLocalAttemptSlotRoi(attempt.id, 'reference', polygonRoi);
+  await store.saveLocalAttemptUpload(attempt.id, upload('reference', '2026-08-25T10:00:00.000Z'));
 
   const first = await store.startLocalCaptureReaction(
     attempt.id,
@@ -206,7 +200,26 @@ test('diagnostic savedAt и elapsed вычисляются по server-side uplo
   assert.ok((updated.reactionElapsedSec ?? 0) >= 4.5);
 });
 
-test('reference upload и ROI блокируются после старта реакции', async () => {
+test('обе ROI можно разметить после diagnostic и затем завершить пару', async () => {
+  const currentPolicy = policy('post-diagnostic-roi');
+  const attempt = await store.createPolicyCaptureAttempt(currentPolicy, selection());
+  await store.saveLocalAttemptUpload(attempt.id, upload('reference', '2026-08-25T10:00:00.000Z'));
+  await store.startLocalCaptureReaction(attempt.id, new Date('2026-08-25T10:00:05.000Z'));
+  await store.saveLocalAttemptUpload(attempt.id, upload('diagnostic', '2026-08-25T10:00:12.250Z'));
+  await store.saveLocalAttemptSlotRoi(attempt.id, 'reference', polygonRoi);
+  await store.saveLocalAttemptSlotRoi(attempt.id, 'diagnostic', polygonRoi);
+
+  const finalized = await store.finalizeLocalCaptureAttempt(attempt.id, {
+    finalMixturePh: null,
+    included: true,
+    exclusionReason: null,
+  });
+  assert.equal(finalized.status, 'finalized');
+  assert.ok(finalized.uploads.reference?.roi);
+  assert.ok(finalized.uploads.diagnostic?.roi);
+});
+
+test('reference ROI разблокируется после diagnostic, а отдельная замена фото запрещена', async () => {
   const currentPolicy = policy('reference-lock');
   const attempt = await store.createPolicyCaptureAttempt(currentPolicy, selection());
   await saveReference(attempt);
@@ -221,7 +234,18 @@ test('reference upload и ROI блокируются после старта р�
       ...polygonRoi,
       points: polygonRoi.shape === 'polygon' ? polygonRoi.points.slice().reverse() : [],
     }),
-    /REFERENCE_LOCKED_AFTER_REACTION/,
+    /REFERENCE_ROI_LOCKED_UNTIL_DIAGNOSTIC/,
+  );
+
+  await store.saveLocalAttemptUpload(attempt.id, upload('diagnostic', '2026-08-25T10:00:30.000Z'));
+  const updatedReference = await store.saveLocalAttemptSlotRoi(attempt.id, 'reference', {
+    ...polygonRoi,
+    points: polygonRoi.shape === 'polygon' ? polygonRoi.points.slice().reverse() : [],
+  });
+  assert.ok(updatedReference.uploads.reference?.roi);
+  await assert.rejects(
+    store.saveLocalAttemptUpload(attempt.id, upload('diagnostic', '2026-08-25T10:00:40.000Z')),
+    /DIAGNOSTIC_LOCKED_AFTER_UPLOAD/,
   );
 
   const { buildServer } = await import('../server.js');
@@ -235,6 +259,15 @@ test('reference upload и ROI блокируются после старта р�
     });
     assert.equal(response.statusCode, 409);
     assert.deepEqual(response.json(), { error: 'REFERENCE_LOCKED_AFTER_REACTION' });
+
+    const diagnosticResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/uploads/attempts/${attempt.id}/slots/diagnostic`,
+      headers: { 'content-type': 'image/jpeg', 'x-file-name': 'late-diagnostic.jpg' },
+      payload: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    });
+    assert.equal(diagnosticResponse.statusCode, 409);
+    assert.deepEqual(diagnosticResponse.json(), { error: 'DIAGNOSTIC_LOCKED_AFTER_UPLOAD' });
   } finally {
     await app.close();
   }
