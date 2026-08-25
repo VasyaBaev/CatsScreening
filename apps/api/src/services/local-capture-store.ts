@@ -116,18 +116,29 @@ export type FreshCaptureCase = {
   id: string;
   attemptId: string;
   createdAt: string;
+  attemptStatus: CaptureAttempt['status'];
   included: boolean;
   exclusionReason: string | null;
+  policySnapshot: CapturePolicy | null;
+  pairId: string | null;
+  displayLabel: string | null;
   taskCode: string;
   taskType: CaptureTask['taskType'];
   specimenId: string;
   sourcePh: number;
+  referencePh: number | null;
   finalMixturePh: number | null;
   operatorId: string;
   device: string;
+  deviceRole: string | null;
+  specimenMode: CaptureAttempt['specimenMode'] | null;
   series: string;
   condition: CaptureAttempt['condition'];
   reactionStartedAt: string | null;
+  diagnosticSavedAt: string | null;
+  reactionElapsedSec: number | null;
+  replacesAttemptId: string | null;
+  replacedByAttemptId: string | null;
   images: CaptureAttemptUpload[];
 };
 
@@ -216,6 +227,72 @@ export function summarizeCapturePolicyQuotas(
     available: cells.reduce((total, cell) => total + cell.available, 0),
     cells,
   });
+}
+
+export type CaptureAdminSummary = {
+  policy: Pick<CapturePolicy, 'policyId' | 'version' | 'seriesId' | 'status'>;
+  counts: {
+    attempts: number;
+    cases: number;
+    finalizedIncluded: number;
+    active: number;
+    reserved: number;
+    abandoned: number;
+    superseded: number;
+    reshoots: number;
+    excluded: number;
+  };
+  quota: {
+    target: number;
+    actual: number;
+    missing: number;
+    cells: Array<CaptureQuotaSummary['cells'][number] & { missing: number }>;
+  };
+};
+
+export function summarizeCaptureAdmin(
+  policy: CapturePolicy,
+  attempts: CaptureAttempt[],
+  cases: FreshCaptureCase[],
+): CaptureAdminSummary {
+  const relevantAttempts = attempts.filter((attempt) => belongsToPolicy(attempt, policy));
+  const relevantCases = cases.filter(
+    (item) =>
+      item.policySnapshot?.policyId === policy.policyId &&
+      item.policySnapshot.seriesId === policy.seriesId,
+  );
+  const quota = summarizeCapturePolicyQuotas(policy, relevantAttempts);
+  const cells = quota.cells.map((cell) => ({
+    ...cell,
+    missing: Math.max(0, cell.target - cell.actual),
+  }));
+  return {
+    policy: {
+      policyId: policy.policyId,
+      version: policy.version,
+      seriesId: policy.seriesId,
+      status: policy.status,
+    },
+    counts: {
+      attempts: relevantAttempts.length,
+      cases: relevantCases.length,
+      finalizedIncluded: relevantAttempts.filter(
+        (attempt) => attempt.status === 'finalized' && attempt.result?.included === true,
+      ).length,
+      active: relevantAttempts.filter((attempt) => attempt.status === 'active').length,
+      reserved: relevantAttempts.filter((attempt) => attempt.status === 'active').length,
+      abandoned: relevantAttempts.filter((attempt) => attempt.status === 'abandoned').length,
+      superseded: relevantAttempts.filter((attempt) => attempt.status === 'superseded').length,
+      reshoots: relevantAttempts.filter((attempt) => Boolean(attempt.replacesAttemptId)).length,
+      excluded: relevantAttempts.filter((attempt) => attempt.result?.included === false).length,
+    },
+    quota: {
+      target: quota.target,
+      actual: quota.actual,
+      missing: Math.max(0, quota.target - quota.actual),
+      cells,
+    },
+  };
 }
 
 function availableSharedSpecimens(
@@ -602,6 +679,7 @@ export function replaceLocalCaptureAttempt(
       replacedByAttemptId: replacementAttempt.id,
     };
     await writeJsonAtomically(attemptPath(previousAttempt.id), linkedPrevious);
+    if (linkedPrevious.result) await ensureFreshCaseManifest(linkedPrevious);
     return { previousAttempt: linkedPrevious, replacementAttempt };
   });
 }
@@ -625,18 +703,29 @@ function caseFromAttempt(attempt: CaptureAttempt): FreshCaptureCase {
     id: attempt.result.caseId,
     attemptId: attempt.id,
     createdAt: attempt.result.finalizedAt,
+    attemptStatus: attempt.status,
     included: attempt.result.included,
     exclusionReason: attempt.result.exclusionReason,
+    policySnapshot: attempt.policySnapshot ?? null,
+    pairId: attempt.pairId ?? null,
+    displayLabel: attempt.displayLabel ?? null,
     taskCode: attempt.task.code,
     taskType: attempt.task.taskType,
     specimenId: attempt.task.specimenId,
     sourcePh: attempt.task.sourcePh,
+    referencePh: attempt.referencePh ?? null,
     finalMixturePh: attempt.finalMixturePh,
     operatorId: attempt.operatorId,
     device: attempt.device,
+    deviceRole: attempt.deviceRole ?? null,
+    specimenMode: attempt.specimenMode ?? null,
     series: attempt.series,
     condition: attempt.condition,
     reactionStartedAt: attempt.reactionStartedAt,
+    diagnosticSavedAt: attempt.diagnosticSavedAt,
+    reactionElapsedSec: attempt.reactionElapsedSec,
+    replacesAttemptId: attempt.replacesAttemptId ?? null,
+    replacedByAttemptId: attempt.replacedByAttemptId ?? null,
     images: attempt.task.slots
       .map((slot) => attempt.uploads[slot.key])
       .filter((upload): upload is CaptureAttemptUpload => Boolean(upload)),
@@ -646,9 +735,9 @@ function caseFromAttempt(attempt: CaptureAttempt): FreshCaptureCase {
 async function ensureFreshCaseManifest(attempt: CaptureAttempt): Promise<void> {
   const item = caseFromAttempt(attempt);
   const items = await readFreshCaptureCases();
-  if (items.some((current) => current.id === item.id)) return;
-
-  items.push(item);
+  const existingIndex = items.findIndex((current) => current.id === item.id);
+  if (existingIndex >= 0) items[existingIndex] = item;
+  else items.push(item);
   await writeTextAtomically(
     captureManifestPath,
     `${items.map((current) => JSON.stringify(current)).join('\r\n')}\r\n`,
