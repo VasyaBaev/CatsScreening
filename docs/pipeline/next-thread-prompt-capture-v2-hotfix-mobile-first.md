@@ -57,14 +57,14 @@ MODE: full
 
 1. В `D:\dev\CatsScreening` read-only проверь `git status --short --branch`, remote и наличие `65d7976`.
 2. Не выполняй `reset`, `checkout --`, `clean`, stash, force-push и не меняй текущую dirty-ветку.
-3. Создай отдельный sibling worktree от baseline:
+3. Создай отдельный локальный worktree внутри игнорируемого каталога основного репозитория:
 
    ```powershell
-   git -C D:\dev\CatsScreening worktree add -b codex/capture-hotfix-mobile-first D:\dev\CatsScreening-hotfix 65d7976
+   git -C D:\dev\CatsScreening worktree add -b codex/capture-hotfix-mobile-first D:\dev\CatsScreening\CatsScreening-hotfix 65d7976
    ```
 
 4. Если такой worktree или branch уже существуют, сначала только проверь их состояние. Не удаляй и не перезаписывай их; при конфликте задай один конкретный вопрос.
-5. Работай дальше только в `D:\dev\CatsScreening-hotfix`.
+5. Работай дальше только в `D:\dev\CatsScreening\CatsScreening-hotfix`.
 6. В первом шаге перенеси из исходного дерева только актуальные:
    - `AGENTS.md`;
    - `.codex/workflows/skills-workflow.md`;
