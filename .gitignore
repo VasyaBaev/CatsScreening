@@ -30,3 +30,7 @@ apps/api/prisma/*.db-journal
 # Локальное файловое хранилище (dev)
 apps/api/storage/*
 !apps/api/storage/.gitkeep
+
+# Локальные Git worktree
+/CatsScreening-hotfix/
+/CatsScreening-hotfix-safe/
